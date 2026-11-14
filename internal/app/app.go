@@ -15,25 +15,23 @@ type Uploader interface {
 }
 
 type App struct {
-	Dir                  string
-	Config               storage.Config
-	LastUpload           storage.UploadState
-	Client               Uploader
-	Logger               *log.Logger
-	DryRun               bool
-	ForceUploadRequested bool
-	Commands             chan Command
-	Updates              chan Status
-	SetStartup           func(bool) error
+	Dir        string
+	Config     storage.Config
+	LastUpload storage.UploadState
+	Client     Uploader
+	Logger     *log.Logger
+	DryRun     bool
+	Commands   chan Command
+	Updates    chan Status
 }
 
-// Run owns coordination and presentation. Component events are handled
-// synchronously on this loop; network workers only send results through a channel.
+// Run owns coordination and presentation. The uploader owns a separate loop;
+// only lifecycle events cross back into the coordinator.
 func (a *App) Run(ctx context.Context) {
-	state := newRunState(a)
+	state := newRunState(ctx, a)
 	ticker := time.NewTicker(time.Duration(a.Config.PollSeconds) * time.Second)
 	defer ticker.Stop()
-	defer state.uploader.wait()
+	defer state.shutdownUploader()
 
 	state.logger.Print("started")
 	state.refreshStatus()
@@ -44,12 +42,11 @@ func (a *App) Run(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			state.tick(ctx, now)
-		case update := <-state.poller.updates:
-			state.uploader.queue(update)
-			state.dispatchUploads(ctx, time.Now())
-		case response := <-state.uploader.results:
-			state.uploader.handleUploadResult(response)
-			state.dispatchUploads(ctx, time.Now())
+		case event, open := <-state.uploader.events:
+			if !open {
+				return
+			}
+			state.handleUploadEvent(event)
 		case command := <-a.Commands:
 			if err := state.handleCommand(ctx, command); err != nil {
 				state.reportCommandError(err)
@@ -58,37 +55,33 @@ func (a *App) Run(ctx context.Context) {
 	}
 }
 
-func newRunState(a *App) *runState {
+func newRunState(ctx context.Context, a *App) *runState {
 	state := &runState{app: a, logger: componentLogger(a.Logger, "app")}
 	saveFolder, _ := storage.ExpandPath(a.Config.SaveFolder)
 	state.resetPoller(saveFolder)
-	state.uploader = newSnapshotUploader(a.Client, a.DryRun, componentLogger(a.Logger, "uploader"), state.handleUploadEvent)
+	state.uploader = newSnapshotUploader(ctx, a.Client, a.DryRun, componentLogger(a.Logger, "uploader"))
 	return state
 }
 
 func (s *runState) resetPoller(saveFolder string) {
-	s.app.ForceUploadRequested = false
 	baseline := ""
 	lastUpload := s.app.LastUpload
 	if !s.app.DryRun && lastUpload.Destination == leaderboard.BaseURL && strings.EqualFold(lastUpload.SaveFolder, saveFolder) {
 		baseline = lastUpload.Fingerprint
 	}
 	s.poller = newFolderPoller(saveFolder, baseline, componentLogger(s.app.Logger, "poller"))
+	s.view.saveFolder = saveFolder
 	s.view.folder = pollEvent{}
+	s.view.delivery.changeFolder()
 }
 
 func (s *runState) tick(ctx context.Context, now time.Time) {
-	s.pollFolder(ctx, now)
-	s.dispatchUploads(ctx, now)
-}
-
-func (s *runState) pollFolder(ctx context.Context, now time.Time) {
 	if ctx.Err() != nil {
 		return
 	}
-	if s.app.ForceUploadRequested {
-		s.poller.requestEmission()
-		s.app.ForceUploadRequested = false
+	if s.view.persistenceError != nil {
+		s.persistLastUpload()
+		s.refreshStatus()
 	}
 	observation := s.poller.poll(ctx, now, s.app.Config.Automatic)
 	if observation.kind == pollCancelled {
@@ -96,59 +89,76 @@ func (s *runState) pollFolder(ctx context.Context, now time.Time) {
 	}
 	s.view.folder = observation
 	s.view.commandError = nil
+	if observation.update != nil {
+		s.forwardSnapshot(ctx, *observation.update)
+	} else {
+		s.refreshStatus()
+	}
+}
+
+func (s *runState) forwardSnapshot(ctx context.Context, update folderUpdate) {
+	s.nextWorkID++
+	update.id = s.nextWorkID
+	if err := s.uploader.queue(ctx, update); err != nil {
+		if ctx.Err() == nil {
+			s.reportCommandError(err)
+		}
+		return
+	}
+	s.logger.Printf("work_id=%d snapshot accepted: %d eligible files", update.id, len(update.snapshot.Files))
+	s.view.delivery.accept(update)
 	s.refreshStatus()
 }
 
-func (s *runState) deliverReadyUpdate() {
-	select {
-	case update := <-s.poller.updates:
-		s.uploader.queue(update)
-	default:
+func (s *runState) shutdownUploader() {
+	s.uploader.stop()
+	// Lifecycle events are reliable: drain successes before shutting down, even
+	// though intermediate UI status messages may be coalesced.
+	for event := range s.uploader.events {
+		s.handleUploadEvent(event)
 	}
-}
-
-// Only ready messages affect dispatch; delivery is independent of polling state.
-func (s *runState) dispatchUploads(ctx context.Context, now time.Time) {
-	if ctx.Err() != nil {
-		return
-	}
-	s.deliverReadyUpdate()
-	s.uploader.uploadPending(ctx, now)
+	s.uploader.wait()
 }
 
 func (s *runState) handleUploadEvent(event uploadEvent) {
-	s.view.upload = event
-	s.view.commandError = nil
-	if event.kind == uploadIdle {
-		s.view.persistenceError = nil
+	// Accepted work keeps its origin even after the watched folder changes.
+	if success, ok := event.(uploadSucceeded); ok {
+		s.recordUpload(success)
 	}
-	if event.kind == uploadSucceeded {
-		s.recordUpload(event)
+	s.view.delivery.observe(event, s.poller.saveFolder)
+	if strings.EqualFold(event.sourceFolder(), s.poller.saveFolder) {
+		s.view.commandError = nil
 	}
 	s.refreshStatus()
 }
 
-func (s *runState) recordUpload(event uploadEvent) {
+func (s *runState) recordUpload(event uploadSucceeded) {
 	lastUpload := storage.UploadState{
-		SaveFolder:  event.update.saveFolder,
+		SaveFolder:  event.saveFolder,
 		Destination: leaderboard.BaseURL,
-		Fingerprint: event.update.snapshot.Fingerprint,
+		Fingerprint: event.fingerprint,
 		UploadedAt:  event.at,
 		Player:      event.result.Player,
 		Heroes:      event.result.Heroes,
 	}
 	s.app.LastUpload = lastUpload
-	s.view.persistenceError = storage.SaveUploadState(s.app.Dir, lastUpload)
-	if s.view.persistenceError != nil {
-		s.logger.Printf("save upload state failed: %v", s.view.persistenceError)
+	s.persistLastUpload()
+}
+
+func (s *runState) persistLastUpload() {
+	previous := s.view.persistenceError
+	err := storage.SaveUploadState(s.app.Dir, s.app.LastUpload)
+	s.view.persistenceError = err
+	if err != nil && (previous == nil || err.Error() != previous.Error()) {
+		s.logger.Printf("save upload state failed: %v", err)
 	}
 }
 
 type runState struct {
-	app         *App
-	logger      *log.Logger
-	poller      *folderPoller
-	uploader    *snapshotUploader
-	view        statusView
-	lastMessage string
+	app        *App
+	logger     *log.Logger
+	poller     *folderPoller
+	uploader   *snapshotUploader
+	view       statusView
+	nextWorkID uint64
 }

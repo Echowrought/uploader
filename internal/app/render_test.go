@@ -6,7 +6,30 @@ import (
 	"time"
 
 	"cwg2uploader/internal/saves"
+	"cwg2uploader/internal/storage"
 )
+
+func TestRenderStatusWithHistory(t *testing.T) {
+	history := storage.UploadState{Heroes: 1, UploadedAt: time.Date(2026, 1, 1, 12, 34, 56, 0, time.UTC)}
+	cases := []struct {
+		name string
+		view statusView
+		want string
+	}{
+		{"successful upload history", statusView{}, "Last upload: 1 heroes successfully uploaded at 2026-01-01 12:34:56"},
+		{"success does not hide settling", statusView{folder: pollEvent{kind: pollSettling, err: saves.ErrSettling}}, "waiting for saves to settle; Last upload: 1 heroes successfully uploaded at 2026-01-01 12:34:56"},
+		{"success does not hide pause", statusView{folder: pollEvent{kind: pollDisabled}}, "Automatic uploads off; Last upload: 1 heroes successfully uploaded at 2026-01-01 12:34:56"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			message := renderStatus(tc.view, history)
+
+			if message != tc.want {
+				t.Fatalf("message = %q; want %q", message, tc.want)
+			}
+		})
+	}
+}
 
 func TestRenderStatus(t *testing.T) {
 	folderError := errors.New("cannot read save folder")
@@ -21,20 +44,19 @@ func TestRenderStatus(t *testing.T) {
 		{"starting", statusView{}, "Starting; automatic uploads send saves to the public CWG2 leaderboard"},
 		{"automatic off", statusView{folder: pollEvent{kind: pollDisabled}}, "Automatic uploads off"},
 		{"settling", statusView{folder: pollEvent{kind: pollSettling, err: saves.ErrSettling}}, saves.ErrSettling.Error()},
-		{"stable", statusView{folder: pollEvent{kind: pollStable}}, "Up to date"},
-		{"pending", statusView{upload: uploadEvent{kind: uploadQueued}}, "Pending changes"},
-		{"active outranks scan error", statusView{folder: pollEvent{kind: pollFailed, err: folderError}, upload: uploadEvent{kind: uploadStarted}}, "Uploading saves"},
-		{"retry continues with automatic off", statusView{folder: pollEvent{kind: pollDisabled}, upload: uploadEvent{kind: uploadRetryScheduled, retryAt: deadline}}, "Pending changes; retry at 12:34:56"},
-		{"scan error survives completion", statusView{folder: pollEvent{kind: pollFailed, err: folderError}, upload: uploadEvent{kind: uploadSucceeded, result: successfulResult()}}, "cannot read save folder"},
-		{"rejection remains visible with automatic off", statusView{folder: pollEvent{kind: pollDisabled}, upload: uploadEvent{kind: uploadRejected, err: rejected}}, "invalid save; -save ingame or choose Upload now"},
-		{"persistence warning", statusView{upload: uploadEvent{kind: uploadSucceeded}, persistenceError: persistenceError}, "Uploaded, but could not persist successful state: disk unavailable"},
-		{"successful upload", statusView{upload: uploadEvent{kind: uploadSucceeded, result: successfulResult()}}, "Uploaded 1 heroes successfully"},
-		{"dry run", statusView{upload: uploadEvent{kind: uploadPreviewed, update: fixtureFolderUpdate("preview", "save")}}, "Dry run: 1 eligible files; no upload or successful state written"},
-		{"command error", statusView{commandError: errors.New("cannot change folder"), upload: uploadEvent{kind: uploadStarted}}, "cannot change folder"},
+		{"stable is detection only", statusView{folder: pollEvent{kind: pollStable}}, "No new changes"},
+		{"pending", statusView{delivery: deliveryView{pending: &deliveryIdentity{}}}, "Pending upload"},
+		{"active and scan error", statusView{folder: pollEvent{kind: pollFailed, err: folderError}, delivery: deliveryView{active: uploadStarted{}}}, "cannot read save folder; Uploading saves"},
+		{"retry and automatic off", statusView{folder: pollEvent{kind: pollDisabled}, delivery: deliveryView{active: uploadRetryScheduled{retryAt: deadline}}}, "Automatic uploads off; Retry at 12:34:56"},
+		{"pending behind old retry", statusView{saveFolder: "new", folder: pollEvent{kind: pollStable}, delivery: deliveryView{pending: &deliveryIdentity{saveFolder: "new"}, active: uploadRetryScheduled{saveFolder: "old", retryAt: deadline}}}, "No new changes; Pending upload; Retry at 12:34:56 (previous folder)"},
+		{"rejection and automatic off", statusView{folder: pollEvent{kind: pollDisabled}, delivery: deliveryView{rejected: &uploadRejected{err: rejected}}}, "Automatic uploads off; invalid save; -save ingame or choose Upload now"},
+		{"persistence warning during retry", statusView{delivery: deliveryView{active: uploadRetryScheduled{retryAt: deadline}}, persistenceError: persistenceError}, "Retry at 12:34:56; Could not persist successful state: disk unavailable"},
+		{"dry run", statusView{delivery: deliveryView{preview: &uploadPreviewed{fileCount: 1}}}, "Dry run: 1 eligible files; no upload or successful state written"},
+		{"command error and active", statusView{commandError: errors.New("cannot change folder"), delivery: deliveryView{active: uploadStarted{}}}, "cannot change folder; Uploading saves"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			message := renderStatus(tc.view)
+			message := renderStatus(tc.view, storage.UploadState{})
 
 			if message != tc.want {
 				t.Fatalf("message = %q; want %q", message, tc.want)

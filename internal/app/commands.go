@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -12,7 +11,7 @@ import (
 func (s *runState) handleCommand(ctx context.Context, command Command) error {
 	switch command.Kind {
 	case "upload":
-		s.app.ForceUploadRequested = true
+		s.poller.requestEmission()
 		// Manual retry does not bypass Retry-After or stability checks.
 	case "pause":
 		if err := s.toggleAutomatic(); err != nil {
@@ -22,12 +21,6 @@ func (s *runState) handleCommand(ctx context.Context, command Command) error {
 		if err := s.changeFolder(command.Value); err != nil {
 			return err
 		}
-	case "startup":
-		if err := s.toggleStartup(); err != nil {
-			return err
-		}
-		s.publish(s.lastMessage)
-		return nil
 	default:
 		return nil
 	}
@@ -46,9 +39,6 @@ func (s *runState) toggleAutomatic() error {
 }
 
 func (s *runState) changeFolder(path string) error {
-	if err := s.uploader.canReset(); err != nil {
-		return fmt.Errorf("cannot change save folder: %w", err)
-	}
 	expanded, err := storage.ExpandPath(path)
 	if err != nil {
 		return err
@@ -59,30 +49,7 @@ func (s *runState) changeFolder(path string) error {
 		return err
 	}
 	s.resetPoller(expanded)
-	// The event loop owns all delivery transitions; reset remains permitted
-	// between the preflight check and the completed config write.
-	if err := s.uploader.reset(); err != nil {
-		return err
-	}
 	s.logger.Printf("save folder set to %q", expanded)
-	return nil
-}
-
-func (s *runState) toggleStartup() error {
-	if s.app.SetStartup == nil {
-		return errors.New("Startup integration unavailable")
-	}
-	previous := s.app.Config.LaunchAtLogin
-	if err := s.app.SetStartup(!previous); err != nil {
-		return fmt.Errorf("Startup registration: %w", err)
-	}
-	config := s.app.Config
-	config.LaunchAtLogin = !previous
-	if err := s.saveConfig(config); err != nil {
-		_ = s.app.SetStartup(previous)
-		return err
-	}
-	s.logger.Printf("launch at sign-in set to %t", config.LaunchAtLogin)
 	return nil
 }
 

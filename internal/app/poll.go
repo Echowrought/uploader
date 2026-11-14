@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"cwg2uploader/internal/saves"
@@ -14,10 +15,10 @@ type folderPoller struct {
 	saveFolder             string
 	scanner                *saves.Scanner
 	logger                 *log.Logger
-	updates                chan folderUpdate
 	lastEmittedFingerprint string
 	forceNextEmission      bool
 	lastError              string
+	lastWarning            string
 }
 
 func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) pollEvent {
@@ -27,7 +28,10 @@ func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) 
 	if !automatic && !p.forceNextEmission {
 		return pollEvent{kind: pollDisabled}
 	}
-	snapshot, err := p.scanner.Scan(now)
+	snapshot, err := p.scanner.Scan(ctx, now)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return pollEvent{kind: pollCancelled, err: err}
+	}
 	if errors.Is(err, saves.ErrSettling) {
 		return pollEvent{kind: pollSettling, err: err}
 	}
@@ -39,24 +43,21 @@ func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) 
 		return pollEvent{kind: pollFailed, err: err}
 	}
 	p.lastError = ""
+	warning := strings.Join(snapshot.Warnings, "; ")
+	if warning != "" && warning != p.lastWarning {
+		p.logger.Printf("save warnings: %s", warning)
+	}
+	p.lastWarning = warning
 	if snapshot.Fingerprint == p.lastEmittedFingerprint && !p.forceNextEmission {
-		return pollEvent{kind: pollStable}
+		return pollEvent{kind: pollStable, warnings: snapshot.Warnings}
 	}
-	update := folderUpdate{saveFolder: p.saveFolder, snapshot: snapshot}
-	// Keep only the latest undelivered snapshot.
-	select {
-	case <-p.updates:
-	default:
+	if err := ctx.Err(); err != nil {
+		return pollEvent{kind: pollCancelled, err: err}
 	}
-	select {
-	case p.updates <- update:
-		p.lastEmittedFingerprint = snapshot.Fingerprint
-		p.forceNextEmission = false
-		p.logger.Printf("snapshot emitted: %d eligible files", len(snapshot.Files))
-		return pollEvent{kind: pollUpdated}
-	case <-ctx.Done():
-		return pollEvent{kind: pollCancelled, err: ctx.Err()}
-	}
+	p.lastEmittedFingerprint = snapshot.Fingerprint
+	p.forceNextEmission = false
+	p.logger.Printf("snapshot emitted: %d eligible files", len(snapshot.Files))
+	return pollEvent{kind: pollUpdated, update: &folderUpdate{saveFolder: p.saveFolder, snapshot: snapshot}, warnings: snapshot.Warnings}
 }
 
 func (p *folderPoller) requestEmission() {
@@ -68,7 +69,6 @@ func newFolderPoller(saveFolder, baseline string, logger *log.Logger) *folderPol
 		saveFolder:             saveFolder,
 		scanner:                &saves.Scanner{Folder: saveFolder, Quiet: 5 * time.Second},
 		logger:                 logger,
-		updates:                make(chan folderUpdate, 1),
 		lastEmittedFingerprint: baseline,
 	}
 }

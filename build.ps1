@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
+    if (Test-Path -LiteralPath dist) {
+        Remove-Item -LiteralPath dist -Recurse -Force
+    }
     go test ./...
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
     go vet ./...
@@ -13,6 +16,11 @@ try {
     & (Join-Path $PSScriptRoot 'scripts\notices.ps1')
     Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
     Write-Host 'Built dist/cwg2-uploader.exe and dist/cwg2-uploader-console.exe'
+} catch {
+    if (Test-Path -LiteralPath dist) {
+        Remove-Item -LiteralPath dist -Recurse -Force
+    }
+    throw
 } finally {
     Pop-Location
 }

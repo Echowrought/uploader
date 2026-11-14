@@ -28,6 +28,9 @@ func NewHTTPClient(proxyURL string) (*http.Client, error) {
 			settings.HTTPSProxy = proxy.String()
 		}
 	}
+	// httpproxy may silently ignore malformed environment proxies and connect
+	// directly, even with a configured fallback. We accept this standard behavior;
+	// validating environment proxies is not a requirement here.
 	lookup := settings.ProxyFunc()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = func(request *http.Request) (*url.URL, error) {

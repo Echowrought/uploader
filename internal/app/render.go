@@ -1,54 +1,86 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"cwg2uploader/internal/storage"
+)
 
 type statusView struct {
+	saveFolder       string
 	folder           pollEvent
-	upload           uploadEvent
+	delivery         deliveryView
 	persistenceError error
 	commandError     error
 }
 
-// renderStatus is the only place that turns component state into UI messages.
-// Operational logs are written independently by each component.
-func renderStatus(view statusView) string {
+// renderStatus composes independent facts. Detection never claims delivery is
+// complete, and historical success never replaces current activity or errors.
+func renderStatus(view statusView, history storage.UploadState) string {
+	var parts []string
 	if view.commandError != nil {
-		return view.commandError.Error()
+		parts = append(parts, view.commandError.Error())
 	}
-	switch event := view.upload; event.kind {
-	case uploadStarted:
-		return "Uploading saves"
-	case uploadQueued:
-		return "Pending changes"
-	case uploadRetryScheduled:
-		return "Pending changes; retry at " + event.retryAt.Format("15:04:05")
+	// Keep the dry-run completion prefix used by the console entry point.
+	if preview := view.delivery.preview; preview != nil {
+		parts = append(parts, fmt.Sprintf("Dry run: %d eligible files; no upload or successful state written", preview.fileCount))
 	}
-	if view.folder.kind == pollFailed {
-		return view.folder.err.Error()
+	if detection := renderDetection(view.folder); detection != "" {
+		parts = append(parts, detection)
 	}
-	if view.upload.kind == uploadRejected {
-		return view.upload.err.Error() + "; -save ingame or choose Upload now"
+	parts = append(parts, renderDelivery(view.delivery, view.saveFolder)...)
+	if count := len(view.folder.warnings); count > 0 {
+		parts = append(parts, fmt.Sprintf("Save warnings: %d (see logs)", count))
+	}
+	if !history.UploadedAt.IsZero() {
+		parts = append(parts, fmt.Sprintf("Last upload: %d heroes successfully uploaded at %s", history.Heroes, history.UploadedAt.Format("2006-01-02 15:04:05")))
 	}
 	if view.persistenceError != nil {
-		return "Uploaded, but could not persist successful state: " + view.persistenceError.Error()
+		parts = append(parts, "Could not persist successful state: "+view.persistenceError.Error())
 	}
-	if view.upload.kind == uploadPreviewed {
-		return fmt.Sprintf("Dry run: %d eligible files; no upload or successful state written", len(view.upload.update.snapshot.Files))
-	}
-	if view.upload.kind == uploadSucceeded {
-		return fmt.Sprintf("Uploaded %d heroes successfully", view.upload.result.Heroes)
-	}
-	if view.folder.kind == pollSettling {
-		return view.folder.err.Error()
-	}
-	switch view.folder.kind {
-	case pollDisabled:
-		return "Automatic uploads off"
-	case pollStable:
-		return "Up to date"
-	case pollUpdated:
-		return "Pending changes"
-	default:
+	if len(parts) == 0 {
 		return "Starting; automatic uploads send saves to the public CWG2 leaderboard"
 	}
+	return strings.Join(parts, "; ")
+}
+
+func renderDetection(event pollEvent) string {
+	switch event.kind {
+	case pollDisabled:
+		return "Automatic uploads off"
+	case pollSettling, pollFailed:
+		return event.err.Error()
+	case pollStable:
+		return "No new changes"
+	default:
+		return ""
+	}
+}
+
+func renderDelivery(view deliveryView, saveFolder string) []string {
+	var parts []string
+	if view.pending != nil {
+		parts = append(parts, "Pending upload"+sourceSuffix(view.pending.saveFolder, saveFolder))
+	}
+	if view.active != nil {
+		suffix := sourceSuffix(view.active.sourceFolder(), saveFolder)
+		switch event := view.active.(type) {
+		case uploadStarted:
+			parts = append(parts, "Uploading saves"+suffix)
+		case uploadRetryScheduled:
+			parts = append(parts, "Retry at "+event.retryAt.Format("15:04:05")+suffix)
+		}
+	}
+	if rejected := view.rejected; rejected != nil {
+		parts = append(parts, rejected.err.Error()+"; -save ingame or choose Upload now")
+	}
+	return parts
+}
+
+func sourceSuffix(source, selected string) string {
+	if strings.EqualFold(source, selected) {
+		return ""
+	}
+	return " (previous folder)"
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"cwg2uploader/internal/app"
 	"cwg2uploader/internal/leaderboard"
@@ -42,11 +43,7 @@ func run(console, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	defaultFolder, err := ui.DefaultSaveFolder()
-	if err != nil {
-		return err
-	}
-	config, firstRun, err := storage.LoadConfig(dir, defaultFolder)
+	config, _, err := storage.LoadConfig(dir, ui.DefaultSaveFolder)
 	if err != nil {
 		return err
 	}
@@ -65,28 +62,30 @@ func run(console, dryRun bool) error {
 		output = io.MultiWriter(writer, os.Stdout)
 	}
 	logger := log.New(output, "", log.Ldate|log.Ltime)
-	if dryRun {
-		// Inspect even if automatic uploads are paused; do not persist this override.
-		config.Automatic = true
-	}
 	lastUpload, err := storage.LoadUploadState(dir)
 	if err != nil {
 		return fmt.Errorf("load state.json (fix or remove it before restarting): %w", err)
 	}
-	if firstRun && !console {
-		ui.Message("CWG2 Uploader", "This app automatically sends your CWG2 saves to the third-party public leaderboard. Existing saves will upload on startup. It never modifies game saves.\n\nUse the tray menu to turn off automatic uploads or choose a different save folder. Already queued uploads and retries will continue.\n\nConfiguration and rotating logs: "+dir)
-	}
-	if !dryRun {
-		if err := ui.SetStartup(config.LaunchAtLogin); err != nil {
-			log.New(output, "[main] ", logger.Flags()).Printf("Startup registration: %v", err)
+	showNotice := func(message string) error {
+		if console {
+			_, err := fmt.Fprintln(os.Stdout, message)
+			return err
 		}
+		return ui.Message("CWG2 Uploader", message)
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	if err := ensureUploadNotice(dir, &config, dryRun, showNotice); err != nil {
+		return err
+	}
+	if dryRun {
+		// Inspect even if automatic uploads are paused; do not persist this override.
+		config.Automatic = true
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	application := &app.App{
 		Dir: dir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
 		Client: &leaderboard.Client{URL: leaderboard.BaseURL, HTTP: httpClient},
-		Logger: logger, Commands: make(chan app.Command, 16), Updates: make(chan app.Status, 1), SetStartup: ui.SetStartup,
+		Logger: logger, Commands: make(chan app.Command, 16), Updates: make(chan app.Status, 1),
 	}
 	done := make(chan struct{})
 	go func() { defer close(done); application.Run(ctx) }()
@@ -105,8 +104,32 @@ func run(console, dryRun bool) error {
 			}
 		}
 	}
-	ui.RunTray(ctx, cancel, application.Commands, application.Updates, config, dir)
+	err = ui.RunTray(ctx, cancel, application.Commands, application.Updates, config, dir)
 	cancel()
 	<-done
+	return err
+}
+
+func ensureUploadNotice(dir string, config *storage.Config, dryRun bool, show func(string) error) error {
+	if config.UploadNoticeShown {
+		return nil
+	}
+	message := "This app sends CWG2 saves to a third-party public leaderboard. Existing saves upload when Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder through the tray or config.json. Already queued uploads and retries continue when Automatic uploads is off."
+	message += fmt.Sprintf("\n\nAutomatic uploads configured: %t\nConfiguration and rotating logs: %s", config.Automatic, dir)
+	if dryRun {
+		message = "Dry run: no saves will be uploaded. This notice will appear again before the first normal run.\n\n" + message
+	}
+	if err := show(message); err != nil {
+		return fmt.Errorf("show upload notice: %w", err)
+	}
+	if dryRun {
+		return nil
+	}
+	next := *config
+	next.UploadNoticeShown = true
+	if err := storage.SaveConfig(dir, next); err != nil {
+		return fmt.Errorf("save upload notice acknowledgement: %w", err)
+	}
+	*config = next
 	return nil
 }

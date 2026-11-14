@@ -20,16 +20,15 @@ func TestFolderPollerEmitsStableSnapshotOnlyOnce(t *testing.T) {
 
 	settling := poller.poll(context.Background(), now, true)
 	first := poller.poll(context.Background(), now.Add(5*time.Second), true)
-	update := nextFolderUpdate(t, poller)
 	repeated := poller.poll(context.Background(), now.Add(10*time.Second), true)
 
 	if settling.kind != pollSettling || !errors.Is(settling.err, saves.ErrSettling) {
 		t.Fatalf("settling event = %+v", settling)
 	}
-	if first.kind != pollUpdated || repeated.kind != pollStable || len(poller.updates) != 0 {
+	if first.kind != pollUpdated || first.update == nil || repeated.kind != pollStable || repeated.update != nil || settling.update != nil {
 		t.Fatal("unchanged snapshot emitted more than once")
 	}
-	if update.snapshot.Fingerprint == "" || poller.lastEmittedFingerprint != update.snapshot.Fingerprint {
+	if first.update.snapshot.Fingerprint == "" || poller.lastEmittedFingerprint != first.update.snapshot.Fingerprint {
 		t.Fatal("emitted fingerprint not tracked")
 	}
 }
@@ -41,20 +40,18 @@ func TestFolderPollerForcedEmissionReemitsUnchangedSnapshot(t *testing.T) {
 
 	poller.poll(context.Background(), now, true)
 	first := poller.poll(context.Background(), now.Add(5*time.Second), true)
-	firstUpdate := nextFolderUpdate(t, poller)
 	poller.requestEmission()
 	second := poller.poll(context.Background(), now.Add(6*time.Second), false)
-	secondUpdate := nextFolderUpdate(t, poller)
 
-	if first.kind != pollUpdated || second.kind != pollUpdated || poller.forceNextEmission {
+	if first.kind != pollUpdated || second.kind != pollUpdated || first.update == nil || second.update == nil || poller.forceNextEmission {
 		t.Fatal("forced emission was not consumed")
 	}
-	if firstUpdate.snapshot.Fingerprint != secondUpdate.snapshot.Fingerprint {
+	if first.update.snapshot.Fingerprint != second.update.snapshot.Fingerprint {
 		t.Fatal("unchanged data should retain its fingerprint")
 	}
 }
 
-func TestFolderPollerCoalescesUndeliveredEvents(t *testing.T) {
+func TestFolderPollerReturnsChangedSnapshot(t *testing.T) {
 	application, _ := fixtureApp(t)
 	poller := fixtureFolderPoller(application)
 	poller.requestEmission()
@@ -64,18 +61,17 @@ func TestFolderPollerCoalescesUndeliveredEvents(t *testing.T) {
 	poller.poll(context.Background(), now, true)
 	first := poller.poll(context.Background(), now.Add(5*time.Second), true)
 	writeErr := os.WriteFile(path, []byte("newer save data"), 0600)
-	poller.poll(context.Background(), now.Add(6*time.Second), true)
+	pending := poller.poll(context.Background(), now.Add(6*time.Second), true)
 	second := poller.poll(context.Background(), now.Add(11*time.Second), true)
-	latest := nextFolderUpdate(t, poller)
 
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	if first.kind != pollUpdated || second.kind != pollUpdated {
-		t.Fatalf("events: %+v, %+v", first, second)
+	if first.kind != pollUpdated || second.kind != pollUpdated || first.update == nil || second.update == nil || pending.kind != pollStable {
+		t.Fatalf("events: %+v, %+v, %+v", first, second, pending)
 	}
-	if latest.snapshot.Files["HERO_01_123.pld"].Text != "newer save data" || len(poller.updates) != 0 {
-		t.Fatal("latest snapshot was not retained")
+	if second.update.snapshot.Files["HERO_01_123.pld"].Text != "newer save data" || first.update.snapshot.Files["HERO_01_123.pld"].Text != "save" {
+		t.Fatal("changed snapshot was not returned independently of the original")
 	}
 	if poller.forceNextEmission {
 		t.Fatal("successful emission did not clear the poller's force flag")
@@ -90,17 +86,16 @@ func TestFolderPollerAutomaticOffDoesNotEmitFurtherChanges(t *testing.T) {
 
 	poller.poll(context.Background(), now, false)
 	first := poller.poll(context.Background(), now.Add(5*time.Second), false)
-	update := nextFolderUpdate(t, poller)
 	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("changed save"), 0600)
 	disabled := poller.poll(context.Background(), now.Add(6*time.Second), false)
 
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	if first.kind != pollUpdated || disabled.kind != pollDisabled {
+	if first.kind != pollUpdated || first.update == nil || disabled.kind != pollDisabled {
 		t.Fatalf("events: %+v, %+v", first, disabled)
 	}
-	if len(poller.updates) != 0 || poller.lastEmittedFingerprint != update.snapshot.Fingerprint {
+	if disabled.update != nil || poller.lastEmittedFingerprint != first.update.snapshot.Fingerprint {
 		t.Fatal("manual emission enabled subsequent automatic polling")
 	}
 }
@@ -116,61 +111,69 @@ func TestFolderPollerCancellationDoesNotRecordEmission(t *testing.T) {
 	if event.kind != pollCancelled || !errors.Is(event.err, context.Canceled) {
 		t.Fatalf("cancelled poll = %+v", event)
 	}
-	if poller.lastEmittedFingerprint != "" || len(poller.updates) != 0 {
+	if poller.lastEmittedFingerprint != "" || event.update != nil {
 		t.Fatal("cancelled poll recorded an event")
 	}
 }
 
 func TestCoordinatorDetectsChangesDuringAnActiveUpload(t *testing.T) {
 	application, client := fixtureApp(t)
-	state := newRunState(application)
+	state := fixtureCoordinator(t, application)
 	now := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); state.uploader.wait() }()
+	defer cancel()
 
 	state.tick(ctx, now)
 	state.tick(ctx, now.Add(5*time.Second))
 	firstFingerprint := state.poller.lastEmittedFingerprint
-	_ = nextRequest(t, ctx, client)
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	first := nextRequest(t, ctx, client)
 	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("changed during upload"), 0600)
 	state.tick(ctx, now.Add(6*time.Second))
 	state.tick(ctx, now.Add(11*time.Second))
-	latest := state.uploader.pending
+	first.reply <- uploadReply{result: successfulResult()}
+	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	latest := nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
 
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	if !state.uploader.busy {
-		t.Fatal("test requires the original upload to remain in flight")
-	}
-	if latest == nil || latest.snapshot.Files["HERO_01_123.pld"].Text != "changed during upload" {
+	if second.payload.Files["HERO_01_123.pld"].Text != "changed during upload" {
 		t.Fatal("active upload prevented folder change detection")
 	}
-	if latest.snapshot.Fingerprint == firstFingerprint {
-		t.Fatal("changed snapshot fingerprint was not emitted")
+	if latest.fingerprint == firstFingerprint || application.LastUpload.Fingerprint != latest.fingerprint {
+		t.Fatal("changed snapshot was not acknowledged")
 	}
 }
 
-func TestCoordinatorDeliversNewEventBeforeDispatchingOlderRetry(t *testing.T) {
+func TestCoordinatorDeliversNewSnapshotBeforeRetry(t *testing.T) {
+	t.Parallel()
 	application, client := fixtureApp(t)
-	state := newRunState(application)
+	state := fixtureCoordinator(t, application)
 	now := time.Now()
-	state.uploader.retryAt = now.Add(10 * time.Second)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); state.uploader.wait() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	state.tick(ctx, now)
 	state.tick(ctx, now.Add(5*time.Second))
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	first := nextRequest(t, ctx, client)
+	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
 	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("latest data"), 0600)
 	state.tick(ctx, now.Add(6*time.Second))
 	state.tick(ctx, now.Add(11*time.Second))
-	request := nextRequest(t, ctx, client)
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	second := nextRequest(t, ctx, client)
 
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	if request.payload.Files["HERO_01_123.pld"].Text != "latest data" {
-		t.Fatal("stale pending snapshot was uploaded")
+	if second.payload.Files["HERO_01_123.pld"].Text != "latest data" || second.startedAt.Before(retry.retryAt) {
+		t.Fatal("retry used stale data or bypassed Retry-After")
 	}
 }
 
@@ -182,15 +185,13 @@ func TestFolderPollerEmitsAgainAfterRestart(t *testing.T) {
 
 	first.poll(context.Background(), now, true)
 	before := first.poll(context.Background(), now.Add(5*time.Second), true)
-	beforeRestart := nextFolderUpdate(t, first)
 	restarted.poll(context.Background(), now, true)
 	after := restarted.poll(context.Background(), now.Add(5*time.Second), true)
-	afterRestart := nextFolderUpdate(t, restarted)
 
-	if before.kind != pollUpdated || after.kind != pollUpdated {
+	if before.kind != pollUpdated || after.kind != pollUpdated || before.update == nil || after.update == nil {
 		t.Fatalf("events: %+v, %+v", before, after)
 	}
-	if beforeRestart.snapshot.Fingerprint != afterRestart.snapshot.Fingerprint {
+	if before.update.snapshot.Fingerprint != after.update.snapshot.Fingerprint {
 		t.Fatal("restart suppressed an emitted but unacknowledged snapshot")
 	}
 }
@@ -212,7 +213,7 @@ func TestRunStateSeedsPollerFromMatchingSuccessfulUpload(t *testing.T) {
 			application.DryRun = tc.dryRun
 			application.LastUpload = storage.UploadState{SaveFolder: filepath.Join(application.Config.SaveFolder, tc.folderSuffix), Destination: tc.destination, Fingerprint: "uploaded"}
 
-			state := newRunState(application)
+			state := fixtureCoordinator(t, application)
 
 			if state.poller.lastEmittedFingerprint != tc.want {
 				t.Fatalf("baseline = %q; want %q", state.poller.lastEmittedFingerprint, tc.want)
@@ -222,46 +223,48 @@ func TestRunStateSeedsPollerFromMatchingSuccessfulUpload(t *testing.T) {
 }
 
 func TestCoordinatorAutomaticOffFinishesQueuedWorkAndRetries(t *testing.T) {
+	t.Parallel()
 	application, client := fixtureApp(t)
 	application.Config.Automatic = false
-	state := newRunState(application)
-	state.uploader.queue(fixtureFolderUpdate("pending", "save"))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); state.uploader.wait() }()
+	state := fixtureCoordinator(t, application)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-	state.dispatchUploads(ctx, time.Now())
+	queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
 	first := nextRequest(t, ctx, client)
 	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	state.uploader.handleUploadResult(nextUploadResult(t, ctx, state.uploader))
-	state.tick(ctx, state.uploader.retryAt)
+	_ = nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
 	second := nextRequest(t, ctx, client)
 	second.reply <- uploadReply{result: successfulResult()}
-	state.uploader.handleUploadResult(nextUploadResult(t, ctx, state.uploader))
+	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
 
-	if application.Config.Automatic {
-		t.Fatal("finishing queued work enabled automatic uploads")
+	if queueErr != nil {
+		t.Fatal(queueErr)
 	}
-	if application.LastUpload.Fingerprint != "pending" {
-		t.Fatal("queued work did not finish with automatic uploads off")
+	if application.Config.Automatic || application.LastUpload.Fingerprint != "pending" {
+		t.Fatal("accepted work did not finish independently of automatic polling")
 	}
-	if state.poller.lastEmittedFingerprint != "" || len(state.poller.updates) != 0 {
+	if state.poller.lastEmittedFingerprint != "" {
 		t.Fatal("retry required another folder event")
 	}
 }
 
-func TestTickConsumesAppForceUploadRequest(t *testing.T) {
+func TestCommandUploadLatchesEmissionWhileAutomaticOff(t *testing.T) {
 	state := fixtureRunState(t)
-	state.app.ForceUploadRequested = true
+	state.app.Config.Automatic = false
 
-	state.tick(context.Background(), time.Now())
+	err := state.handleCommand(context.Background(), Command{Kind: "upload"})
+	status := publishedStatus(t, state.app)
 
-	if state.app.ForceUploadRequested {
-		t.Fatal("tick did not consume the app request")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !state.poller.forceNextEmission {
-		t.Fatal("tick did not transfer the request to the poller")
+	if !state.poller.forceNextEmission || state.app.Config.Automatic {
+		t.Fatal("upload request was not latched independently of automatic polling")
 	}
-	if state.lastMessage != saves.ErrSettling.Error() {
+	if status.Message != saves.ErrSettling.Error() {
 		t.Fatal("requested snapshot bypassed settling")
 	}
 }
@@ -273,84 +276,49 @@ func TestTickPreservesForcedEmissionAcrossSettlingTicks(t *testing.T) {
 	}{{"automatic uploads on", true}, {"automatic uploads off", false}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			state := fixtureRunState(t)
-			state.app.Config.Automatic = tc.automatic
-			state.app.ForceUploadRequested = true
-			snapshot := readSnapshot(t, state.app.Config.SaveFolder)
+			application, client := fixtureApp(t)
+			state := fixtureCoordinator(t, application)
+			application.Config.Automatic = tc.automatic
+			snapshot := readSnapshot(t, application.Config.SaveFolder)
 			state.poller.lastEmittedFingerprint = snapshot.Fingerprint
 			now := time.Now()
-			state.uploader.retryAt = now.Add(time.Hour)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 
-			state.tick(context.Background(), now)
-			consumed := !state.app.ForceUploadRequested
-			state.tick(context.Background(), now.Add(time.Second))
-			state.tick(context.Background(), now.Add(2*time.Second))
+			commandErr := state.handleCommand(ctx, Command{Kind: "upload"})
+			state.tick(ctx, now.Add(time.Second))
+			state.tick(ctx, now.Add(2*time.Second))
 			latchedBeforeSettling := state.poller.forceNextEmission
-			pendingBeforeSettling := state.uploader.pending
-			state.tick(context.Background(), now.Add(5*time.Second))
-
-			if !consumed || !latchedBeforeSettling {
-				t.Fatal("later settling ticks lost the consumed force request")
+			beforeSettling := len(client.requests)
+			state.tick(ctx, now.Add(6*time.Second))
+			started := nextCoordinatorEvent[uploadStarted](t, ctx, state)
+			request := nextRequest(t, ctx, client)
+			if commandErr != nil || !latchedBeforeSettling || state.poller.forceNextEmission {
+				t.Fatal("force request was lost or not consumed after settling")
 			}
-			if pendingBeforeSettling != nil {
-				t.Fatal("requested snapshot emitted before settling")
+			if beforeSettling != 0 || started.id != state.nextWorkID || started.saveFolder != application.Config.SaveFolder || request.payload.Files["HERO_01_123.pld"].Text != "save" {
+				t.Fatal("forced snapshot was not emitted and uploaded after settling")
 			}
-			if state.poller.forceNextEmission || state.app.ForceUploadRequested {
-				t.Fatal("successful emission retained the force request")
-			}
-			if state.uploader.pending == nil || state.uploader.pending.snapshot.Fingerprint != snapshot.Fingerprint {
-				t.Fatal("unchanged requested snapshot was not emitted after settling")
-			}
-			if state.app.Config.Automatic != tc.automatic {
-				t.Fatal("explicit request changed the automatic upload preference")
+			if application.Config.Automatic != tc.automatic {
+				t.Fatal("explicit request changed the preference")
 			}
 		})
 	}
 }
 
-func TestPollFolderForcedEmissionWorksWithAutomaticUploadsOff(t *testing.T) {
-	state := fixtureRunState(t)
-	state.app.Config.Automatic = false
-	state.poller.requestEmission()
-	now := time.Now()
-
-	state.pollFolder(context.Background(), now)
-	state.pollFolder(context.Background(), now.Add(5*time.Second))
-
-	if len(state.poller.updates) != 1 || state.poller.forceNextEmission {
-		t.Fatal("forced snapshot was not emitted with automatic uploads off")
-	}
-	if state.app.Config.Automatic {
-		t.Fatal("forced emission enabled automatic polling")
-	}
-}
-
-func TestPollFolderAutomaticOffDoesNotReadSaveFolder(t *testing.T) {
+func TestTickAutomaticOffDoesNotReadSaveFolder(t *testing.T) {
 	state := fixtureRunState(t)
 	state.app.Config.Automatic = false
 	state.poller.scanner.Folder = filepath.Join(t.TempDir(), "missing")
 
-	state.pollFolder(context.Background(), time.Now())
+	state.tick(context.Background(), time.Now())
+	status := publishedStatus(t, state.app)
 
-	if state.lastMessage != "Automatic uploads off" {
-		t.Fatalf("status = %q", state.lastMessage)
-	}
-	if len(state.poller.updates) != 0 {
-		t.Fatal("disabled polling emitted an event")
+	if status.Message != "Automatic uploads off" {
+		t.Fatal("disabled polling accessed the save folder")
 	}
 }
 
 func fixtureFolderPoller(application *App) *folderPoller {
 	return newFolderPoller(application.Config.SaveFolder, "", componentLogger(application.Logger, "poller"))
-}
-
-func nextFolderUpdate(t *testing.T, poller *folderPoller) folderUpdate {
-	t.Helper()
-	select {
-	case update := <-poller.updates:
-		return update
-	default:
-		t.Fatal("expected a folder update event")
-		return folderUpdate{}
-	}
 }

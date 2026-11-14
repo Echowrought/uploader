@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,6 +54,111 @@ func TestClientClassifiesRateLimit(t *testing.T) {
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || !uploadError.Retry || uploadError.After != 120*time.Second {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientClassifiesIncompleteErrorResponses(t *testing.T) {
+	cases := []struct {
+		status  int
+		retry   bool
+		message string
+	}{
+		{http.StatusBadRequest, false, `upload rejected: HTTP 400: "partial"`},
+		{http.StatusTooManyRequests, true, `upload rejected: HTTP 429: "partial"`},
+		{http.StatusServiceUnavailable, true, `upload rejected: HTTP 503: "partial"`},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "120")
+				w.Header().Set("Content-Length", "100")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte("partial"))
+			}))
+			defer server.Close()
+			client := Client{HTTP: server.Client(), URL: server.URL}
+
+			_, err := client.Upload(context.Background(), UploadRequest{})
+
+			var uploadError *UploadError
+			if !errors.As(err, &uploadError) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if uploadError.Retry != tc.retry || uploadError.After != 120*time.Second {
+				t.Fatalf("lost HTTP error classification: %+v", uploadError)
+			}
+			if uploadError.Message != tc.message {
+				t.Fatalf("message = %q; want %q", uploadError.Message, tc.message)
+			}
+			if !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("lost response read error: %v", err)
+			}
+			if uploadError.Body != "" {
+				t.Fatal("incomplete body retained as a full diagnostic body")
+			}
+		})
+	}
+}
+
+func TestClientRejectsIncompleteSuccessResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte(`{"player":"Player","heroes":1,"user_hash":"123"}`))
+	}))
+	defer server.Close()
+	client := Client{HTTP: server.Client(), URL: server.URL}
+
+	_, err := client.Upload(context.Background(), UploadRequest{})
+
+	var uploadError *UploadError
+	if !errors.As(err, &uploadError) || !uploadError.Retry {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("lost response read error: %v", err)
+	}
+	if uploadError.Message != "read upload response: unexpected EOF" {
+		t.Fatalf("unexpected message: %q", uploadError.Message)
+	}
+}
+
+func TestClientClassifiesOversizedResponses(t *testing.T) {
+	cases := []struct {
+		status int
+		retry  bool
+		after  time.Duration
+		prefix string
+	}{
+		{http.StatusOK, false, 0, "server response exceeds safety limit:"},
+		{http.StatusTooManyRequests, true, 120 * time.Second, "upload rejected: HTTP 429:"},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			body := strings.Repeat("x", responseSizeLimit+1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "120")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client := Client{HTTP: server.Client(), URL: server.URL}
+
+			_, err := client.Upload(context.Background(), UploadRequest{})
+
+			var uploadError *UploadError
+			if !errors.As(err, &uploadError) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if uploadError.Retry != tc.retry || uploadError.After != tc.after {
+				t.Fatalf("unexpected error classification: %+v", uploadError)
+			}
+			if !strings.HasPrefix(uploadError.Message, tc.prefix) {
+				t.Fatalf("unexpected message: %q", uploadError.Message)
+			}
+			if uploadError.Body != "" {
+				t.Fatal("oversized body retained for diagnostic logging")
+			}
+		})
 	}
 }
 
@@ -129,8 +235,111 @@ func TestClientReportsCancelledRequest(t *testing.T) {
 
 	_, err := client.Upload(ctx, UploadRequest{})
 
-	if err == nil {
-		t.Fatal("cancelled request succeeded")
+	var uploadError *UploadError
+	if !errors.As(err, &uploadError) || uploadError.Retry {
+		t.Fatalf("unexpected cancellation error: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost cancellation cause: %v", err)
+	}
+}
+
+func TestClientReportsExpiredCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	client := Client{HTTP: server.Client(), URL: server.URL}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := client.Upload(ctx, UploadRequest{})
+
+	var uploadError *UploadError
+	if !errors.As(err, &uploadError) || uploadError.Retry {
+		t.Fatalf("unexpected deadline error: %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lost deadline cause: %v", err)
+	}
+}
+
+func TestClientReportsCancellationWhileReadingResponse(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client := Client{
+				URL: BaseURL,
+				HTTP: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: status,
+						Header:     http.Header{"Retry-After": {"120"}},
+						Body: io.NopCloser(readFunc(func(_ []byte) (int, error) {
+							cancel()
+							return 0, io.ErrUnexpectedEOF
+						})),
+					}, nil
+				})},
+			}
+
+			_, err := client.Upload(ctx, UploadRequest{})
+
+			var uploadError *UploadError
+			if !errors.As(err, &uploadError) || uploadError.Retry || uploadError.After != 0 {
+				t.Fatalf("unexpected cancellation error: %v", err)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("lost cancellation cause: %v", err)
+			}
+		})
+	}
+}
+
+func TestClientRetriesHTTPTimeoutWithActiveCallerContext(t *testing.T) {
+	ctx := context.Background()
+	client := Client{
+		URL: BaseURL,
+		HTTP: &http.Client{
+			Timeout: 20 * time.Millisecond,
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				defer request.Body.Close()
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}),
+		},
+	}
+
+	_, err := client.Upload(ctx, UploadRequest{})
+
+	var uploadError *UploadError
+	if !errors.As(err, &uploadError) || !uploadError.Retry {
+		t.Fatalf("unexpected timeout error: %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lost timeout cause: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("caller context expired: %v", ctx.Err())
+	}
+}
+
+func TestClientPreservesConnectionError(t *testing.T) {
+	cause := errors.New("connection failed")
+	client := Client{
+		URL: BaseURL,
+		HTTP: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			defer request.Body.Close()
+			return nil, cause
+		})},
+	}
+
+	_, err := client.Upload(context.Background(), UploadRequest{})
+
+	var uploadError *UploadError
+	if !errors.As(err, &uploadError) || !uploadError.Retry {
+		t.Fatalf("unexpected connection error: %v", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("lost connection cause: %v", err)
 	}
 }
 
@@ -169,3 +378,13 @@ func TestRetryAfterParsesHTTPDate(t *testing.T) {
 		t.Fatalf("delay = %s", delay)
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type readFunc func([]byte) (int, error)
+
+func (f readFunc) Read(data []byte) (int, error) { return f(data) }

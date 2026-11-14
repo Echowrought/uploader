@@ -1,338 +1,461 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"log"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"cwg2uploader/internal/leaderboard"
 	"cwg2uploader/internal/saves"
-	"cwg2uploader/internal/storage"
 )
 
-func TestUploaderRetriesWithoutAnotherFolderEvent(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	update := fixtureFolderUpdate("initial", "save")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+func TestUploaderAutomaticallyStartsLatestPendingSnapshot(t *testing.T) {
+	ctx, uploader, application, client := fixtureUploader(t)
 
-	uploader.queue(update)
-	uploader.uploadPending(ctx, time.Now())
+	firstErr := uploader.queue(ctx, fixtureFolderUpdate("first", "first save"))
+	started := nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: time.Hour}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	deadline := uploader.retryAt
-	uploader.uploadPending(ctx, deadline.Add(-time.Nanosecond))
-	beforeDeadline := len(client.requests)
-	uploader.uploadPending(ctx, deadline)
+	middleErr := uploader.queue(ctx, fixtureFolderUpdate("middle", "middle save"))
+	latestErr := uploader.queue(ctx, fixtureFolderUpdate("latest", "latest save"))
+	first.reply <- uploadReply{result: successfulResult()}
+	firstSuccess := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	second := nextRequest(t, ctx, client)
 	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
+	secondSuccess := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
 
-	if beforeDeadline != 0 {
+	if firstErr != nil || middleErr != nil || latestErr != nil {
+		t.Fatalf("queue errors: %v, %v, %v", firstErr, middleErr, latestErr)
+	}
+	if started.saveFolder != "saves" || started.id != firstSuccess.id {
+		t.Fatal("started event identified the wrong snapshot")
+	}
+	if firstSuccess.fingerprint != "first" || secondSuccess.fingerprint != "latest" || firstSuccess.saveFolder != "saves" || secondSuccess.saveFolder != "saves" {
+		t.Fatal("completion events acknowledged the wrong snapshots")
+	}
+	if !reflect.DeepEqual(firstSuccess.result, successfulResult()) || firstSuccess.at.IsZero() || secondSuccess.at.IsZero() {
+		t.Fatal("completion events lost their result or completion time")
+	}
+	if second.payload.Files["HERO_01_123.pld"].Text != "latest save" {
+		t.Fatal("pending data was not coalesced")
+	}
+	if application.LastUpload.Fingerprint != "" {
+		t.Fatal("uploader mutated coordinator state")
+	}
+	_, stateErr := os.Stat(filepath.Join(application.Dir, "state.json"))
+	if !os.IsNotExist(stateErr) {
+		t.Fatal("uploader performed persistence")
+	}
+}
+
+func TestUploaderQueueDoesNotWaitForEventDelivery(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
+
+	firstErr := uploader.queue(ctx, fixtureFolderUpdate("first", "first save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	first := nextRequest(t, ctx, client)
+	first.reply <- uploadReply{result: successfulResult()}
+	// Leave success unread: the worker must deliver it before taking more work.
+	middleErr := uploader.queue(ctx, fixtureFolderUpdate("middle", "middle save"))
+	latestErr := uploader.queue(ctx, fixtureFolderUpdate("latest", "latest save"))
+	firstSuccess := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	latestSuccess := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+
+	if firstErr != nil || middleErr != nil || latestErr != nil {
+		t.Fatalf("queue errors: %v, %v, %v", firstErr, middleErr, latestErr)
+	}
+	if firstSuccess.fingerprint != "first" || latestSuccess.fingerprint != "latest" {
+		t.Fatal("event backpressure lost or reordered snapshot completions")
+	}
+	if second.payload.Files["HERO_01_123.pld"].Text != "latest save" {
+		t.Fatal("event backpressure prevented pending-snapshot coalescing")
+	}
+}
+
+func TestUploaderQueueIsSafeForConcurrentCallers(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
+	errorsSeen := make(chan error, 32)
+	var callers sync.WaitGroup
+
+	initialErr := uploader.queue(ctx, fixtureFolderUpdate("active", "active save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	first := nextRequest(t, ctx, client)
+	for i := 0; i < 32; i++ {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			errorsSeen <- uploader.queue(ctx, fixtureFolderUpdate("concurrent", "queued save"))
+		}()
+	}
+	callers.Wait()
+	close(errorsSeen)
+	latestErr := uploader.queue(ctx, fixtureFolderUpdate("latest", "latest save"))
+	first.reply <- uploadReply{result: successfulResult()}
+	_ = nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	latest := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+
+	if initialErr != nil || latestErr != nil {
+		t.Fatalf("queue errors: %v, %v", initialErr, latestErr)
+	}
+	for err := range errorsSeen {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if latest.fingerprint != "latest" || second.payload.Files["HERO_01_123.pld"].Text != "latest save" {
+		t.Fatal("concurrent callers corrupted pending work")
+	}
+}
+
+func TestUploaderRetriesOnItsOwnTimer(t *testing.T) {
+	t.Parallel()
+	ctx, uploader, _, client := fixtureUploader(t)
+
+	queueErr := uploader.queue(ctx, fixtureFolderUpdate("retry", "save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	first := nextRequest(t, ctx, client)
+	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+	retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+
+	if queueErr != nil {
+		t.Fatal(queueErr)
+	}
+	if retry.saveFolder != "saves" || retry.id != success.id {
+		t.Fatal("retry event did not identify its failed attempt")
+	}
+	if second.startedAt.Before(retry.retryAt) {
 		t.Fatal("retry started before Retry-After elapsed")
 	}
-	if !reflect.DeepEqual(first.payload, second.payload) {
-		t.Fatal("retry changed the submitted data")
-	}
-	if application.LastUpload.Fingerprint != "initial" {
-		t.Fatal("retry success not recorded")
-	}
-	if uploader.pending != nil {
-		t.Fatal("successful retry retained pending work")
+	if !reflect.DeepEqual(first.payload, second.payload) || success.fingerprint != "retry" {
+		t.Fatal("retry required a new event or changed the data")
 	}
 }
 
-func TestUploaderKeepsLatestEventWhileUploadIsActive(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+func TestUploaderRetryUsesNewerSnapshotQueuedDuringRequest(t *testing.T) {
+	t.Parallel()
+	ctx, uploader, _, client := fixtureUploader(t)
 
-	uploader.queue(fixtureFolderUpdate("initial", "first"))
-	uploader.uploadPending(ctx, time.Now())
+	old := fixtureFolderUpdate("old", "old save")
+	old.id = 1
+	replacement := fixtureFolderUpdate("new", "new save")
+	replacement.id = 2
+
+	firstErr := uploader.queue(ctx, old)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	first := nextRequest(t, ctx, client)
-	uploader.queue(fixtureFolderUpdate("middle", "second"))
-	uploader.queue(fixtureFolderUpdate("latest", "third"))
-	uploader.uploadPending(ctx, time.Now())
-	whileBusy := len(client.requests)
-	first.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	afterFirst := application.LastUpload.Fingerprint
-	uploader.uploadPending(ctx, time.Now())
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-
-	if whileBusy != 0 {
-		t.Fatal("more than one upload ran at a time")
-	}
-	if afterFirst != "initial" {
-		t.Fatal("old result marked newer data as uploaded")
-	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "third" {
-		t.Fatal("pending events were not coalesced to the latest snapshot")
-	}
-	if application.LastUpload.Fingerprint != "latest" {
-		t.Fatal("latest result not persisted")
-	}
-}
-
-func TestUploaderRetriesLatestPendingEventAfterFailure(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
-
-	uploader.queue(fixtureFolderUpdate("initial", "first"))
-	uploader.uploadPending(ctx, time.Now())
-	first := nextRequest(t, ctx, client)
-	uploader.queue(fixtureFolderUpdate("latest", "new save"))
+	newErr := uploader.queue(ctx, replacement)
 	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	uploader.uploadPending(ctx, uploader.retryAt)
+	retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	second := nextRequest(t, ctx, client)
 	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
+	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
 
-	if second.payload.Files["HERO_01_123.pld"].Text != "new save" {
-		t.Fatal("retry replaced the latest event with stale failed data")
+	if firstErr != nil || newErr != nil {
+		t.Fatalf("queue errors: %v, %v", firstErr, newErr)
 	}
-	if application.LastUpload.Fingerprint != "latest" {
-		t.Fatal("latest snapshot was not recorded")
+	if second.payload.Files["HERO_01_123.pld"].Text != "new save" || success.fingerprint != "new" {
+		t.Fatal("failure restored old data over a newer pending snapshot")
+	}
+	if retry.saveFolder != "saves" || retry.id != old.id || success.id != replacement.id {
+		t.Fatal("retry event identified pending data instead of the failed attempt")
+	}
+	if second.startedAt.Before(retry.retryAt) {
+		t.Fatal("new pending data bypassed retry backoff")
 	}
 }
 
-func TestUploaderRetriesAcceptedEventIndependentlyOfAutomaticMode(t *testing.T) {
-	application, client := fixtureApp(t)
-	application.Config.Automatic = false
-	uploader := newRunState(application).uploader
-	update := fixtureFolderUpdate("requested", "save")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+func TestUploaderReemittedRejectedSnapshotIsAccepted(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
+	update := fixtureFolderUpdate("same", "save")
 
-	uploader.queue(update)
-	uploader.uploadPending(ctx, time.Now())
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	uploader.uploadPending(ctx, uploader.retryAt)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-
-	if application.Config.Automatic {
-		t.Fatal("uploader changed the automatic-upload preference")
-	}
-	if application.LastUpload.Fingerprint != "requested" {
-		t.Fatal("accepted event was lost between retries")
-	}
-}
-
-func TestUploaderTrustsNewEventAfterRejection(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	update := fixtureFolderUpdate("rejected", "save")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
-
-	uploader.queue(update)
-	uploader.uploadPending(ctx, time.Now())
+	firstErr := uploader.queue(ctx, update)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	first := nextRequest(t, ctx, client)
 	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid save"}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	uploader.queue(update)
-	uploader.uploadPending(ctx, time.Now())
+	rejected := nextUploaderEvent[uploadRejected](t, ctx, uploader)
+	secondErr := uploader.queue(ctx, update)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	second := nextRequest(t, ctx, client)
 	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
+	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
 
-	if application.LastUpload.Fingerprint != "rejected" {
-		t.Fatal("uploader ignored a newly emitted event for a previously rejected snapshot")
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("queue errors: %v, %v", firstErr, secondErr)
+	}
+	if rejected.saveFolder != "saves" || rejected.id != update.id || rejected.err.Error() != "invalid save" || success.fingerprint != "same" {
+		t.Fatal("uploader deduplicated a trusted event")
 	}
 }
 
-func TestUploaderUploadsPreviouslySuccessfulEvent(t *testing.T) {
-	application, client := fixtureApp(t)
-	update := fixtureFolderUpdate("uploaded", "save")
-	application.LastUpload = storage.UploadState{SaveFolder: update.saveFolder, Destination: leaderboard.BaseURL, Fingerprint: update.snapshot.Fingerprint}
-	uploader := newRunState(application).uploader
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+func TestUploaderSupersededFailureDoesNotRejectNewSnapshot(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
 
-	uploader.queue(update)
-	uploader.uploadPending(ctx, time.Now())
+	old := fixtureFolderUpdate("old", "old save")
+	old.id = 1
+	replacement := fixtureFolderUpdate("new", "new save")
+	replacement.id = 2
+
+	firstErr := uploader.queue(ctx, old)
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	first := nextRequest(t, ctx, client)
+	secondErr := uploader.queue(ctx, replacement)
+	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid old snapshot"}}
+	afterFailure, startedOK := nextLifecycleEvent(t, ctx, uploader).(uploadStarted)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("queue errors: %v, %v", firstErr, secondErr)
+	}
+	if !startedOK || afterFailure.id != replacement.id {
+		t.Fatal("old failure was rendered as a rejection of newer pending data")
+	}
+	if second.payload.Files["HERO_01_123.pld"].Text != "new save" || success.fingerprint != "new" {
+		t.Fatal("new snapshot did not finish")
+	}
+}
+
+func TestRetryDelay(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		attempt  int
+		retry    bool
+		min, max time.Duration
+	}{
+		{"permanent", &leaderboard.UploadError{Message: "invalid"}, 0, false, 0, 0},
+		{"unknown", errors.New("unexpected failure"), 0, false, 0, 0},
+		{"initial backoff", &leaderboard.UploadError{Retry: true}, 0, true, 2500 * time.Millisecond, 5 * time.Second},
+		{"increased backoff", &leaderboard.UploadError{Retry: true}, 1, true, 5 * time.Second, 10 * time.Second},
+		{"capped backoff", &leaderboard.UploadError{Retry: true}, 100, true, 150 * time.Second, 5 * time.Minute},
+		{"retry after", &leaderboard.UploadError{Retry: true, After: time.Hour}, 0, true, time.Hour, time.Hour},
+		{"wrapped failure", fmt.Errorf("wrapped: %w", &leaderboard.UploadError{Retry: true, After: time.Hour}), 0, true, time.Hour, time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			delay, retry := retryDelay(tc.err, tc.attempt)
+
+			if retry != tc.retry || delay < tc.min || delay > tc.max {
+				t.Fatalf("retryDelay = (%s, %v); expected retry=%v, delay in [%s, %s]", delay, retry, tc.retry, tc.min, tc.max)
+			}
+		})
+	}
+}
+
+func TestUploaderCancelledQueueDoesNotSubmitWork(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	cancelledErr := uploader.queue(cancelled, fixtureFolderUpdate("cancelled", "do not send"))
+	acceptedErr := uploader.queue(ctx, fixtureFolderUpdate("accepted", "send"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
 	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
 
-	if request.payload.Files["HERO_01_123.pld"].Text != "save" {
-		t.Fatal("uploader deduplicated an event instead of trusting the poller")
+	if !errors.Is(cancelledErr, context.Canceled) || acceptedErr != nil {
+		t.Fatalf("errors: %v, %v", cancelledErr, acceptedErr)
+	}
+	if request.payload.Files["HERO_01_123.pld"].Text != "send" {
+		t.Fatal("cancelled queue request was submitted")
 	}
 }
 
-func TestUploaderNewEventClearsPreviousRejection(t *testing.T) {
-	application, client := fixtureApp(t)
-	update := fixtureFolderUpdate("uploaded", "save")
-	application.LastUpload = storage.UploadState{SaveFolder: update.saveFolder, Destination: leaderboard.BaseURL, Fingerprint: update.snapshot.Fingerprint}
-	state := newRunState(application)
-	state.uploader.rejection = &rejection{fingerprint: "different rejected snapshot", message: "invalid save"}
+func TestUploaderStopInterruptsRetryWait(t *testing.T) {
+	ctx, uploader, _, client := fixtureUploader(t)
 
-	state.uploader.queue(update)
-
-	if state.uploader.rejection != nil {
-		t.Fatal("new event retained an obsolete rejection")
+	queueErr := uploader.queue(ctx, fixtureFolderUpdate("retry", "save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	first := nextRequest(t, ctx, client)
+	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: time.Hour}}
+	_ = nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
+	uploader.stop()
+	for range uploader.events {
 	}
-	if state.uploader.pending == nil || state.uploader.pending.snapshot.Fingerprint != "uploaded" {
-		t.Fatal("new event was not retained for dispatch")
+	uploader.wait()
+
+	if queueErr != nil {
+		t.Fatal(queueErr)
 	}
 	if len(client.requests) != 0 {
-		t.Fatal("queueing must not dispatch a network request")
+		t.Fatal("shutdown started another retry")
 	}
 }
 
-func TestUploaderPreviouslyUploadedEventStillHonorsRetryDeadline(t *testing.T) {
-	application, client := fixtureApp(t)
-	update := fixtureFolderUpdate("uploaded", "save")
-	application.LastUpload = storage.UploadState{SaveFolder: update.saveFolder, Destination: leaderboard.BaseURL, Fingerprint: update.snapshot.Fingerprint}
-	uploader := newRunState(application).uploader
-	now := time.Now()
-	deadline := now.Add(time.Hour)
-	uploader.retryAt = deadline
+func TestUploaderShutdownPreservesUndeliveredSuccess(t *testing.T) {
+	application, _ := fixtureApp(t)
+	started, release, returning := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	client := uploadFunc(func(ctx context.Context, _ leaderboard.UploadRequest) (leaderboard.Result, error) {
+		close(started)
+		select {
+		case <-release:
+			close(returning)
+			return successfulResult(), nil
+		case <-ctx.Done():
+			return leaderboard.Result{}, ctx.Err()
+		}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+	defer cancel()
+	uploader := newSnapshotUploader(ctx, client, false, componentLogger(application.Logger, "uploader"))
+	t.Cleanup(func() {
+		uploader.stop()
+		for range uploader.events {
+		}
+		uploader.wait()
+	})
 
-	uploader.queue(update)
-	uploader.uploadPending(ctx, now)
-	uploader.queue(fixtureFolderUpdate("new", "changed save"))
-	uploader.uploadPending(ctx, now)
-
-	if !uploader.retryAt.Equal(deadline) || len(client.requests) != 0 {
-		t.Fatal("previous upload history bypassed Retry-After for newer data")
+	queueErr := uploader.queue(ctx, fixtureFolderUpdate("delivered", "save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	awaitSignal(t, ctx, started)
+	close(release)
+	awaitSignal(t, ctx, returning)
+	uploader.stop()
+	var successes []uploadSucceeded
+	for event := range uploader.events {
+		if success, ok := event.(uploadSucceeded); ok {
+			successes = append(successes, success)
+		}
 	}
-	if uploader.pending == nil || uploader.pending.snapshot.Fingerprint != "new" {
-		t.Fatal("new data was not retained for a later retry")
+	uploader.wait()
+	stoppedErr := uploader.queue(ctx, fixtureFolderUpdate("late", "do not send"))
+
+	if queueErr != nil {
+		t.Fatal(queueErr)
+	}
+	if len(successes) != 1 || successes[0].fingerprint != "delivered" {
+		t.Fatal("shutdown dropped or duplicated success")
+	}
+	if !errors.Is(stoppedErr, errUploaderStopped) {
+		t.Fatalf("queue after shutdown: %v", stoppedErr)
 	}
 }
 
-func TestUploaderQueuedSnapshotDoesNotInheritOlderRejection(t *testing.T) {
-	application, client := fixtureApp(t)
-	var logs bytes.Buffer
-	application.Logger = log.New(&logs, "", 0)
-	uploader := newRunState(application).uploader
-	deadline := time.Now().Add(time.Hour)
-	uploader.retryAt, uploader.attempt = deadline, 3
+func TestUploaderStopWaitsForClientToFinish(t *testing.T) {
+	application, _ := fixtureApp(t)
+	started, cleaning, release, cleaned := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	finishCleanup := func() { releaseOnce.Do(func() { close(release) }) }
+	client := uploadFunc(func(ctx context.Context, _ leaderboard.UploadRequest) (leaderboard.Result, error) {
+		close(started)
+		<-ctx.Done()
+		close(cleaning)
+		<-release
+		close(cleaned)
+		return leaderboard.Result{}, ctx.Err()
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
+	defer cancel()
+	uploader := newSnapshotUploader(ctx, client, false, componentLogger(application.Logger, "uploader"))
+	t.Cleanup(func() {
+		finishCleanup()
+		uploader.stop()
+		for range uploader.events {
+		}
+		uploader.wait()
+	})
 
-	uploader.queue(fixtureFolderUpdate("old", "old save"))
-	uploader.uploadPending(ctx, deadline)
-	first := nextRequest(t, ctx, client)
-	uploader.queue(fixtureFolderUpdate("new", "new save"))
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid old snapshot"}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	afterOldFailure := uploader.rejection
-	uploader.uploadPending(ctx, deadline)
-	second := nextRequest(t, ctx, client)
-	duringNewUpload := uploader.rejection
-	attempt, retryAt := uploader.attempt, uploader.retryAt
-	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
+	queueErr := uploader.queue(ctx, fixtureFolderUpdate("active", "save"))
+	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+	awaitSignal(t, ctx, started)
+	uploader.stop()
+	awaitSignal(t, ctx, cleaning)
+	finishedEarly := false
+	select {
+	case <-uploader.done:
+		finishedEarly = true
+	default:
+	}
+	finishCleanup()
+	for range uploader.events {
+	}
+	uploader.wait()
 
-	if afterOldFailure != nil || duringNewUpload != nil {
-		t.Fatal("old failure became rejection state for the newer snapshot")
+	if queueErr != nil {
+		t.Fatal(queueErr)
 	}
-	if attempt != 3 || !retryAt.Equal(deadline) {
-		t.Fatal("discarding stale rejection changed delivery backoff")
+	if finishedEarly {
+		t.Fatal("uploader exited before the client finished")
 	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "new save" || application.LastUpload.Fingerprint != "new" {
-		t.Fatal("new snapshot was not uploaded successfully")
-	}
-	if !strings.Contains(logs.String(), "invalid old snapshot") {
-		t.Fatal("superseded upload failure was not logged")
-	}
-}
-
-func TestUploaderNewEventAfterFailureClearsRejectionWithoutResettingBackoff(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	deadline := time.Now().Add(time.Hour)
-	uploader.retryAt, uploader.attempt = deadline, 2
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
-
-	uploader.queue(fixtureFolderUpdate("old", "old save"))
-	uploader.uploadPending(ctx, deadline)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid old snapshot"}}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-	oldRejection := uploader.rejection
-	uploader.queue(fixtureFolderUpdate("new", "new save"))
-	afterQueue := uploader.rejection
-	uploader.uploadPending(ctx, deadline)
-	second := nextRequest(t, ctx, client)
-	duringNewUpload := uploader.rejection
-	attempt, retryAt := uploader.attempt, uploader.retryAt
-	second.reply <- uploadReply{result: successfulResult()}
-	uploader.handleUploadResult(nextUploadResult(t, ctx, uploader))
-
-	if oldRejection == nil || oldRejection.fingerprint != "old" || oldRejection.message != "invalid old snapshot" {
-		t.Fatal("idle rejection did not identify its failed snapshot")
-	}
-	if afterQueue != nil || duringNewUpload != nil {
-		t.Fatal("new event retained the old snapshot's rejection")
-	}
-	if attempt != 2 || !retryAt.Equal(deadline) {
-		t.Fatal("clearing rejection changed delivery backoff")
-	}
-	if application.LastUpload.Fingerprint != "new" {
-		t.Fatal("new snapshot did not complete")
-	}
-}
-
-func TestUploaderStartingNewUploadClearsRejectionWithoutResettingBackoff(t *testing.T) {
-	application, client := fixtureApp(t)
-	uploader := newRunState(application).uploader
-	deadline := time.Now().Add(time.Hour)
-	uploader.queue(fixtureFolderUpdate("new", "new save"))
-	uploader.rejection = &rejection{fingerprint: "old", message: "invalid old snapshot"}
-	uploader.retryAt, uploader.attempt = deadline, 4
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() { cancel(); uploader.workers.Wait() }()
-
-	uploader.uploadPending(ctx, deadline)
-	request := nextRequest(t, ctx, client)
-
-	if uploader.rejection != nil {
-		t.Fatal("starting a new upload retained stale rejection state")
-	}
-	if uploader.attempt != 4 || !uploader.retryAt.Equal(deadline) {
-		t.Fatal("starting a new upload reset delivery backoff")
-	}
-	if request.payload.Files["HERO_01_123.pld"].Text != "new save" {
-		t.Fatal("wrong snapshot was uploaded")
+	select {
+	case <-cleaned:
+	default:
+		t.Fatal("client cleanup was not joined")
 	}
 }
 
 func fixtureFolderUpdate(fingerprint, text string) folderUpdate {
-	return folderUpdate{
-		saveFolder: "saves",
-		snapshot:   saves.Snapshot{Files: map[string]saves.File{"HERO_01_123.pld": {Text: text, Mtime: 1700000000123}}, Fingerprint: fingerprint},
+	return folderUpdate{saveFolder: "saves", snapshot: saves.Snapshot{Files: map[string]saves.File{"HERO_01_123.pld": {Text: text, Mtime: 1700000000123}}, Fingerprint: fingerprint}}
+}
+
+func nextLifecycleEvent(t *testing.T, ctx context.Context, uploader *snapshotUploader) uploadEvent {
+	t.Helper()
+	select {
+	case event, open := <-uploader.events:
+		if !open {
+			t.Fatal("uploader stopped before expected event")
+		}
+		return event
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for lifecycle event")
+		return nil
 	}
 }
 
-func nextUploadResult(t *testing.T, ctx context.Context, uploader *snapshotUploader) uploadResult {
+func fixtureUploader(t *testing.T) (context.Context, *snapshotUploader, *App, *fakeUploader) {
 	t.Helper()
-	select {
-	case result := <-uploader.results:
-		return result
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for upload result")
-		return uploadResult{}
+	application, client := fixtureApp(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	uploader := newSnapshotUploader(ctx, client, application.DryRun, componentLogger(application.Logger, "uploader"))
+	t.Cleanup(func() {
+		uploader.stop()
+		for range uploader.events {
+		}
+		uploader.wait()
+		cancel()
+	})
+	return ctx, uploader, application, client
+}
+
+func nextUploaderEvent[T uploadEvent](t *testing.T, ctx context.Context, uploader *snapshotUploader) T {
+	t.Helper()
+	var zero T
+	for {
+		select {
+		case event, open := <-uploader.events:
+			if !open {
+				t.Fatalf("uploader stopped before expected event %T", zero)
+				return zero
+			}
+			if matching, ok := event.(T); ok {
+				return matching
+			}
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for upload event %T", zero)
+			return zero
+		}
 	}
+}
+
+type uploadFunc func(context.Context, leaderboard.UploadRequest) (leaderboard.Result, error)
+
+func (f uploadFunc) Upload(ctx context.Context, request leaderboard.UploadRequest) (leaderboard.Result, error) {
+	return f(ctx, request)
 }

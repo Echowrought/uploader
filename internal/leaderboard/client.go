@@ -43,11 +43,14 @@ type UploadError struct {
 	// Body is retained for diagnostic logging only when smaller than 4 KiB.
 	Body    string
 	Message string
+	Cause   error
 	Retry   bool
 	After   time.Duration
 }
 
 func (e *UploadError) Error() string { return e.Message }
+
+func (e *UploadError) Unwrap() error { return e.Cause }
 
 func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
 	body, err := json.Marshal(request)
@@ -62,31 +65,40 @@ func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, err
 	req.Header.Set("User-Agent", "CWG2Uploader/0.1")
 	response, err := c.HTTP.Do(req)
 	if err != nil {
-		return Result{}, &UploadError{Message: "upload connection failed: " + err.Error(), Retry: true}
+		retry := true
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err, retry = ctxErr, false
+		}
+		return Result{}, &UploadError{Message: "upload connection failed: " + err.Error(), Cause: err, Retry: retry}
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseSizeLimit+1))
-	if err != nil {
-		return Result{}, &UploadError{Message: "read upload response: " + err.Error(), Retry: true}
+	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
+		return Result{}, &UploadError{Message: "read upload response: " + ctxErr.Error(), Cause: ctxErr}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// Status and retry headers take precedence over an incomplete error body.
 		var errorBody string
-		if len(data) < errorBodyLogLimit {
+		if err == nil && len(data) < errorBodyLogLimit {
 			errorBody = string(data)
 		}
 		return Result{}, &UploadError{
 			Body:    errorBody,
+			Cause:   err,
 			Message: withResponseExcerpt(fmt.Sprintf("upload rejected: HTTP %d", response.StatusCode), data),
 			Retry:   response.StatusCode == 408 || response.StatusCode == 429 || response.StatusCode >= 500,
 			After:   retryAfter(response.Header.Get("Retry-After"), time.Now()),
 		}
+	}
+	if err != nil {
+		return Result{}, &UploadError{Message: "read upload response: " + err.Error(), Cause: err, Retry: true}
 	}
 	if len(data) > responseSizeLimit {
 		return Result{}, &UploadError{Message: withResponseExcerpt("server response exceeds safety limit", data)}
 	}
 	var result Result
 	if err := json.Unmarshal(data, &result); err != nil || result.Player == "" || result.Heroes < 1 || len(result.UserHash) == 0 || string(result.UserHash) == "null" {
-		return Result{}, &UploadError{Message: withResponseExcerpt("unrecognized upload response; success not recorded", data)}
+		return Result{}, &UploadError{Message: withResponseExcerpt("unrecognized upload response; success not recorded", data), Cause: err}
 	}
 	return result, nil
 }

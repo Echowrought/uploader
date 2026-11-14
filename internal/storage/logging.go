@@ -1,11 +1,16 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"unicode/utf8"
 )
+
+const maxLogEntryBytes = 256 << 10
+const logTruncationMarker = "\n[log entry truncated]\n"
 
 type RotatingLog struct {
 	mu      sync.Mutex
@@ -24,9 +29,12 @@ func OpenLog(dir string) (*RotatingLog, error) {
 	return writer, writer.open()
 }
 
+// Write consumes the whole entry, truncating oversized entries on disk only.
 func (w *RotatingLog) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	originalSize := len(data)
+	data = truncateLogEntry(data)
 	if w.file == nil {
 		if err := w.open(); err != nil {
 			return 0, err
@@ -39,7 +47,10 @@ func (w *RotatingLog) Write(data []byte) (int, error) {
 	}
 	n, err := w.file.Write(data)
 	w.size += int64(n)
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	return originalSize, nil
 }
 
 func (w *RotatingLog) Close() error {
@@ -51,6 +62,20 @@ func (w *RotatingLog) Close() error {
 	err := w.file.Close()
 	w.file = nil
 	return err
+}
+
+func truncateLogEntry(data []byte) []byte {
+	if len(data) <= maxLogEntryBytes {
+		return data
+	}
+	end := maxLogEntryBytes - len(logTruncationMarker)
+	for end > 0 && !utf8.RuneStart(data[end]) {
+		end--
+	}
+	truncated := make([]byte, end+len(logTruncationMarker))
+	copy(truncated, data[:end])
+	copy(truncated[end:], logTruncationMarker)
+	return truncated
 }
 
 func (w *RotatingLog) open() error {
@@ -68,10 +93,39 @@ func (w *RotatingLog) open() error {
 }
 
 func (w *RotatingLog) rotate() error {
-	if err := w.file.Close(); err != nil {
+	err := w.file.Close()
+	w.file = nil
+	if err != nil {
 		return err
 	}
-	w.file = nil
+
+	// Move the current log first: a reader may prevent renaming it on Windows.
+	// In that case no backup should be aged or deleted, even on repeated retries.
+	file, err := os.CreateTemp(filepath.Dir(w.path), ".rotate-*")
+	if err != nil {
+		return err
+	}
+	staged := file.Name()
+	if err := file.Close(); err != nil {
+		os.Remove(staged)
+		return err
+	}
+	if err := os.Rename(w.path, staged); err != nil {
+		os.Remove(staged)
+		return err
+	}
+
+	if err := w.rotateBackups(staged); err != nil {
+		if restoreErr := os.Rename(staged, w.path); restoreErr != nil {
+			// Keep the staged log for recovery; never delete it on this path.
+			return errors.Join(err, fmt.Errorf("restore current log from %q: %w", staged, restoreErr))
+		}
+		return err
+	}
+	return w.open()
+}
+
+func (w *RotatingLog) rotateBackups(staged string) error {
 	oldest := fmt.Sprintf("%s.%d", w.path, w.backups)
 	if err := os.Remove(oldest); err != nil && !os.IsNotExist(err) {
 		return err
@@ -81,8 +135,5 @@ func (w *RotatingLog) rotate() error {
 			return err
 		}
 	}
-	if err := os.Rename(w.path, w.path+".1"); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return w.open()
+	return os.Rename(staged, w.path+".1")
 }

@@ -1,12 +1,11 @@
 package windows
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -30,17 +29,22 @@ func DefaultSaveFolder() (string, error) {
 }
 
 // PickFolder uses Windows PowerShell's built-in Forms dialog; no external runtime install.
-func PickFolder() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+func PickFolder(job *subprocessJob) (string, error) {
 	script := `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose your CWG2 save folder'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; [Console]::Write($d.SelectedPath) }; $d.Dispose()`
-	command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-STA", "-Command", script)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	output, err := command.Output()
+	executable, err := exec.LookPath("powershell.exe")
 	if err != nil {
-		return "", errors.New("could not open folder picker")
+		return "", fmt.Errorf("open folder picker: %w", err)
 	}
-	return strings.TrimSpace(strings.TrimPrefix(string(output), "\xef\xbb\xbf")), nil
+	output, err := job.output([]string{executable, "-NoProfile", "-STA", "-Command", script}, 5*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("open folder picker: %w", err)
+	}
+	// Console.Write adds no newline. Whitespace may be part of the folder name.
+	return pickerPath(output), nil
+}
+
+func pickerPath(output []byte) string {
+	return strings.TrimPrefix(string(output), "\xef\xbb\xbf")
 }
 
 func Open(target string) error {
@@ -52,11 +56,21 @@ func Open(target string) error {
 	return win.ShellExecute(0, operation, path, nil, nil, win.SW_SHOWNORMAL)
 }
 
-func Message(title, message string) {
-	titlePtr, _ := win.UTF16PtrFromString(title)
-	messagePtr, _ := win.UTF16PtrFromString(message)
+func Message(title, message string) error {
+	titlePtr, err := win.UTF16PtrFromString(title)
+	if err != nil {
+		return err
+	}
+	messagePtr, err := win.UTF16PtrFromString(message)
+	if err != nil {
+		return err
+	}
 	box := win.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW")
-	box.Call(0, uintptr(unsafe.Pointer(messagePtr)), uintptr(unsafe.Pointer(titlePtr)), 0x40)
+	result, _, _ := box.Call(0, uintptr(unsafe.Pointer(messagePtr)), uintptr(unsafe.Pointer(titlePtr)), 0x40)
+	if result == 0 {
+		return errors.New("could not display Windows message box")
+	}
+	return nil
 }
 
 func SingleInstance() (func(), error) {

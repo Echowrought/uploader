@@ -18,7 +18,7 @@ type Command struct {
 }
 
 func (s *runState) refreshStatus() {
-	s.publish(renderStatus(s.view))
+	s.publish(renderStatus(s.view, s.app.LastUpload))
 }
 
 func (s *runState) reportCommandError(err error) {
@@ -28,7 +28,6 @@ func (s *runState) reportCommandError(err error) {
 }
 
 func (s *runState) publish(message string) {
-	s.lastMessage = message
 	status := Status{Message: message, Config: s.app.Config, LastUpload: s.app.LastUpload.UploadedAt}
 	select {
 	case s.app.Updates <- status:

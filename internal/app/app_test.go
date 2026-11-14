@@ -48,8 +48,8 @@ func TestAppSkipsSnapshotAlreadyUploadedBeforeRestart(t *testing.T) {
 	t.Parallel()
 	application, client := fixtureApp(t)
 	scanner := saves.Scanner{Folder: application.Config.SaveFolder}
-	_, _ = scanner.Scan(time.Now())
-	snapshot, err := scanner.Scan(time.Now())
+	_, _ = scanner.Scan(context.Background(), time.Now())
+	snapshot, err := scanner.Scan(context.Background(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,11 +58,11 @@ func TestAppSkipsSnapshotAlreadyUploadedBeforeRestart(t *testing.T) {
 	defer cancel()
 
 	done := startApp(ctx, application)
-	status := awaitStatus(t, ctx, application, "Up to date")
+	status := awaitStatus(t, ctx, application, "No new changes")
 	cancel()
 	<-done
 
-	if status.Message != "Up to date" {
+	if !strings.Contains(status.Message, "No new changes") {
 		t.Fatal(status.Message)
 	}
 	if len(client.requests) != 0 {
@@ -167,6 +167,30 @@ func TestAppDryRunDoesNotUploadOrPersistState(t *testing.T) {
 	}
 }
 
+func TestCoordinatorDryRunReceivesPreviewMetadata(t *testing.T) {
+	application, client := fixtureApp(t)
+	application.DryRun = true
+	state := fixtureCoordinator(t, application)
+	update := fixtureFolderUpdate("preview", "save")
+	update.saveFolder = application.Config.SaveFolder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	state.forwardSnapshot(ctx, update)
+	preview := nextCoordinatorEvent[uploadPreviewed](t, ctx, state)
+	status := publishedStatus(t, application)
+
+	if preview.id != state.nextWorkID || preview.saveFolder != update.saveFolder || preview.fileCount != 1 {
+		t.Fatalf("incorrect preview metadata: %+v", preview)
+	}
+	if status.Message != "Dry run: 1 eligible files; no upload or successful state written" {
+		t.Fatal(status.Message)
+	}
+	if len(client.requests) != 0 || application.LastUpload.Fingerprint != "" {
+		t.Fatal("preview uploaded data or recorded a successful upload")
+	}
+}
+
 func TestAppCancelsInFlightUploadOnShutdown(t *testing.T) {
 	t.Parallel()
 	application, client := fixtureApp(t)
@@ -240,6 +264,133 @@ func TestAppDetectsChangesMadeDuringUpload(t *testing.T) {
 	}
 }
 
+func TestPollingFailureIsLoggedWhileUploadIsActive(t *testing.T) {
+	application, client := fixtureApp(t)
+	var logs bytes.Buffer
+	application.Logger = log.New(&logs, "", 0)
+	state := fixtureCoordinator(t, application)
+	state.poller.scanner.Folder = filepath.Join(t.TempDir(), "missing")
+	update := fixtureFolderUpdate("accepted", "save")
+	update.saveFolder = application.Config.SaveFolder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	queueErr := state.uploader.queue(ctx, update)
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	request := nextRequest(t, ctx, client)
+	state.tick(ctx, time.Now())
+	whileUploading, observation := publishedStatus(t, application).Message, state.view.folder
+	request.reply <- uploadReply{result: successfulResult()}
+	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+	status := publishedStatus(t, application)
+
+	if queueErr != nil {
+		t.Fatal(queueErr)
+	}
+	if observation.kind != pollFailed || !strings.Contains(logs.String(), "[poller] save scan failed:") {
+		t.Fatal("upload activity hid the polling error")
+	}
+	if !strings.Contains(whileUploading, "Uploading saves") || !strings.Contains(whileUploading, "read save folder") || !strings.Contains(status.Message, "read save folder") {
+		t.Fatal("composed status lost upload activity or the polling error")
+	}
+	if application.LastUpload.Fingerprint != "accepted" {
+		t.Fatal("polling error interfered with successful delivery")
+	}
+}
+
+func TestCoordinatorReportsUploadStatePersistenceFailure(t *testing.T) {
+	application, _ := fixtureApp(t)
+	var logs bytes.Buffer
+	application.Logger = log.New(&logs, "", 0)
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	application.Dir = path
+	state := fixtureCoordinator(t, application)
+	event := uploadSucceeded{saveFolder: application.Config.SaveFolder, fingerprint: "delivered", result: successfulResult(), at: time.Now()}
+
+	state.handleUploadEvent(event)
+	status := publishedStatus(t, application)
+
+	if application.LastUpload.Fingerprint != "delivered" || state.view.persistenceError == nil {
+		t.Fatal("successful delivery and persistence failure were conflated")
+	}
+	if !strings.Contains(status.Message, "Could not persist successful state") || !strings.Contains(logs.String(), "[app] save upload state failed:") {
+		t.Fatal("persistence failure was not rendered and logged")
+	}
+}
+
+func TestFailedFolderConfigWritePreservesPendingDelivery(t *testing.T) {
+	t.Parallel()
+	application, client := fixtureApp(t)
+	state := fixtureCoordinator(t, application)
+	original := application.Config.SaveFolder
+	replacement := t.TempDir()
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	first := nextRequest(t, ctx, client)
+	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true}}
+	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+	application.Dir = path
+	commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
+	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+	second := nextRequest(t, ctx, client)
+	second.reply <- uploadReply{result: successfulResult()}
+	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+
+	if queueErr != nil {
+		t.Fatal(queueErr)
+	}
+	if commandErr == nil || application.Config.SaveFolder != original || state.poller.saveFolder != original {
+		t.Fatal("failed config write changed the folder")
+	}
+	if application.LastUpload.Fingerprint != "pending" || second.startedAt.Before(retry.retryAt) {
+		t.Fatal("failed config write discarded pending data or backoff")
+	}
+}
+
+func TestAppShutdownPersistsSuccessfulDelivery(t *testing.T) {
+	t.Parallel()
+	application, _ := fixtureApp(t)
+	started, release, returning := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	application.Client = uploadFunc(func(ctx context.Context, _ leaderboard.UploadRequest) (leaderboard.Result, error) {
+		close(started)
+		select {
+		case <-release:
+			close(returning)
+			return successfulResult(), nil
+		case <-ctx.Done():
+			return leaderboard.Result{}, ctx.Err()
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	done := startApp(ctx, application)
+	t.Cleanup(func() { cancel(); <-done })
+	awaitSignal(t, ctx, started)
+	close(release)
+	awaitSignal(t, ctx, returning)
+	cancel()
+	<-done
+	persisted, err := storage.LoadUploadState(application.Dir)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Fingerprint == "" || persisted.Heroes != 1 {
+		t.Fatal("shutdown dropped successful delivery before persistence")
+	}
+}
+
 func TestToUploadRequestConvertsSnapshotFiles(t *testing.T) {
 	snapshot := saves.Snapshot{
 		Files: map[string]saves.File{
@@ -260,18 +411,33 @@ func TestToUploadRequestConvertsSnapshotFiles(t *testing.T) {
 	}
 }
 
+func TestToUploadRequestStripsOnlyLeadingBOMWithoutChangingSnapshot(t *testing.T) {
+	text := "\ufeffhero\ufeffdata"
+	snapshot := fixtureFolderUpdate("local", text).snapshot
+
+	request := toUploadRequest(snapshot)
+
+	if request.Files["HERO_01_123.pld"].Text != "hero\ufeffdata" {
+		t.Fatal("conversion failed to strip the leading BOM or altered an interior BOM")
+	}
+	if snapshot.Files["HERO_01_123.pld"].Text != text || snapshot.Fingerprint != "local" {
+		t.Fatal("protocol conversion modified the local snapshot")
+	}
+}
+
 type uploadReply struct {
 	result leaderboard.Result
 	err    error
 }
 type uploadRequest struct {
-	payload leaderboard.UploadRequest
-	reply   chan uploadReply
+	payload   leaderboard.UploadRequest
+	reply     chan uploadReply
+	startedAt time.Time
 }
 type fakeUploader struct{ requests chan uploadRequest }
 
 func (f *fakeUploader) Upload(ctx context.Context, payload leaderboard.UploadRequest) (leaderboard.Result, error) {
-	request := uploadRequest{payload: payload, reply: make(chan uploadReply, 1)}
+	request := uploadRequest{payload: payload, reply: make(chan uploadReply, 1), startedAt: time.Now()}
 	select {
 	case f.requests <- request:
 	case <-ctx.Done():
@@ -300,8 +466,8 @@ func fixtureApp(t *testing.T) (*App, *fakeUploader) {
 func readSnapshot(t *testing.T, folder string) saves.Snapshot {
 	t.Helper()
 	scanner := saves.Scanner{Folder: folder}
-	_, _ = scanner.Scan(time.Now())
-	snapshot, err := scanner.Scan(time.Now())
+	_, _ = scanner.Scan(context.Background(), time.Now())
+	snapshot, err := scanner.Scan(context.Background(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +491,15 @@ func nextRequest(t *testing.T, ctx context.Context, client *fakeUploader) upload
 	}
 }
 
+func awaitSignal(t *testing.T, ctx context.Context, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for signal")
+	}
+}
+
 func awaitStatus(t *testing.T, ctx context.Context, application *App, substring string) Status {
 	t.Helper()
 	for {
@@ -336,6 +511,45 @@ func awaitStatus(t *testing.T, ctx context.Context, application *App, substring 
 		case <-ctx.Done():
 			t.Fatalf("timed out waiting for status %q", substring)
 			return Status{}
+		}
+	}
+}
+
+func publishedStatus(t *testing.T, application *App) Status {
+	t.Helper()
+	select {
+	case status := <-application.Updates:
+		return status
+	default:
+		t.Fatal("no status published")
+		return Status{}
+	}
+}
+
+func fixtureCoordinator(t *testing.T, application *App) *runState {
+	t.Helper()
+	state := newRunState(t.Context(), application)
+	t.Cleanup(state.shutdownUploader)
+	return state
+}
+
+func nextCoordinatorEvent[T uploadEvent](t *testing.T, ctx context.Context, state *runState) T {
+	t.Helper()
+	var zero T
+	for {
+		select {
+		case event, open := <-state.uploader.events:
+			if !open {
+				t.Fatalf("uploader stopped before expected event %T", zero)
+				return zero
+			}
+			state.handleUploadEvent(event)
+			if matching, ok := event.(T); ok {
+				return matching
+			}
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for coordinator event %T", zero)
+			return zero
 		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 
 	"cwg2uploader/internal/app"
 	"cwg2uploader/internal/leaderboard"
@@ -17,7 +18,12 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string) {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string) error {
+	job, err := newSubprocessJob()
+	if err != nil {
+		return err
+	}
+	defer job.Close()
 	systray.Run(func() {
 		systray.SetIcon(trayIcon())
 		systray.SetTooltip("CWG2 Uploader")
@@ -28,7 +34,8 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		automaticUploads := systray.AddMenuItemCheckbox("Automatic uploads", "Send new saves automatically; queued uploads and retries continue when off", config.Automatic)
 		upload := systray.AddMenuItem("Upload now", "Upload current saves even with Automatic uploads off")
 		folder := systray.AddMenuItem("Choose save folder...", "")
-		startup := systray.AddMenuItemCheckbox("Launch at Windows sign-in", "", config.LaunchAtLogin)
+		startupEnabled, startupErr := StartupEnabled()
+		startup := systray.AddMenuItemCheckbox("Launch at Windows sign-in", "Register this executable; Windows startup policy may override it", startupEnabled)
 		board := systray.AddMenuItem("Open leaderboard", "")
 		logs := systray.AddMenuItem("Open logs", "")
 		settings := systray.AddMenuItem("Open config.json (restart to reload)", "")
@@ -49,6 +56,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					go Message("CWG2 Uploader", err.Error())
 				}
 			}
+			showError(startupErr)
 			for {
 				select {
 				case <-ctx.Done():
@@ -61,7 +69,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case update := <-updates:
 					latest = update
 					statusItem.SetTitle(display(update.Message, 90))
-					systray.SetTooltip(display("CWG2: "+update.Message, 120))
+					systray.SetTooltip(tooltip("CWG2: " + update.Message))
 					if !update.LastUpload.IsZero() {
 						lastItem.SetTitle("Last upload: " + update.LastUpload.Format("2006-01-02 15:04:05"))
 					}
@@ -69,11 +77,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						automaticUploads.Check()
 					} else {
 						automaticUploads.Uncheck()
-					}
-					if update.Config.LaunchAtLogin {
-						startup.Check()
-					} else {
-						startup.Uncheck()
 					}
 				case <-statusItem.ClickedCh:
 					text := latest.Message + "\n\nSave folder: " + latest.Config.SaveFolder
@@ -83,12 +86,26 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
 				case <-startup.ClickedCh:
-					send(app.Command{Kind: "startup"})
+					// Query again so external registration changes are respected.
+					enabled, err := StartupEnabled()
+					if err != nil {
+						showError(err)
+						continue
+					}
+					if err := SetStartup(!enabled); err != nil {
+						showError(err)
+						continue
+					}
+					if enabled {
+						startup.Uncheck()
+					} else {
+						startup.Check()
+					}
 				case <-folder.ClickedCh:
 					if !picking {
 						picking = true
 						folder.Disable()
-						go func() { path, err := PickFolder(); picked <- folderResult{path, err} }()
+						go func() { path, err := PickFolder(job); picked <- folderResult{path, err} }()
 					}
 				case result := <-picked:
 					picking = false
@@ -107,6 +124,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			}
 		}()
 	}, cancel)
+	return nil
 }
 
 type folderResult struct {
@@ -115,17 +133,42 @@ type folderResult struct {
 }
 
 func display(text string, limit int) string {
-	text = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, text)
+	text = cleanDisplayText(text)
 	runes := []rune(text)
 	if len(runes) > limit {
 		return string(runes[:limit-1]) + "…"
 	}
 	return text
+}
+
+// Windows reserves 128 UTF-16 units for the tooltip, including its terminator.
+func tooltip(text string) string {
+	text = cleanDisplayText(text)
+	const limit = 127
+	units := 0
+	for _, r := range text {
+		units += utf16.RuneLen(r)
+	}
+	if units <= limit {
+		return text
+	}
+	units = 0
+	for end, r := range text {
+		units += utf16.RuneLen(r)
+		if units > limit-1 { // Reserve one unit for the ellipsis.
+			return text[:end] + "…"
+		}
+	}
+	return text
+}
+
+func cleanDisplayText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
 }
 
 // ICO containing a generated PNG keeps distribution to one executable.

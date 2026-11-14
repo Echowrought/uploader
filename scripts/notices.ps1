@@ -1,9 +1,16 @@
 $ErrorActionPreference = 'Stop'
-# Generate redistribution notices from the modules actually linked on Windows.
-$lines = go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Dir}}{{end}}' .
-if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate dependencies' }
-$root = go env GOROOT
-if ($LASTEXITCODE -ne 0) { throw 'Could not locate Go license' }
+# Build-only helper: build.ps1 supplies the repository working directory.
+# Go emits UTF-8 paths; Windows PowerShell otherwise may decode them as OEM text.
+$previousEncoding = [Console]::OutputEncoding
+try {
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    $lines = go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Dir}}{{end}}' .
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate dependencies' }
+    $root = go env GOROOT
+    if ($LASTEXITCODE -ne 0) { throw 'Could not locate Go license' }
+} finally {
+    [Console]::OutputEncoding = $previousEncoding
+}
 $sections = [System.Collections.Generic.List[string]]::new()
 $sections.Add("# Third-party notices`n`nGenerated from the Windows build dependencies. Includes the Go runtime license.")
 $sections.Add("## Go runtime and standard library`n`n" + '```text' + "`n" + [IO.File]::ReadAllText((Join-Path $root 'LICENSE')) + "`n" + '```')

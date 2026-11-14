@@ -11,40 +11,87 @@ import (
 )
 
 type Config struct {
-	SaveFolder    string `json:"save_folder"`
-	PollSeconds   int    `json:"poll_interval_seconds"`
-	Automatic     bool   `json:"upload_automatically"`
-	LaunchAtLogin bool   `json:"launch_at_login"`
-	ProxyURL      string `json:"proxy_url"`
+	SaveFolder        string `json:"save_folder"`
+	PollSeconds       int    `json:"poll_interval_seconds"`
+	Automatic         bool   `json:"upload_automatically"`
+	ProxyURL          string `json:"proxy_url"`
+	UploadNoticeShown bool   `json:"upload_notice_shown"`
 }
 
-func LoadConfig(dir, defaultFolder string) (Config, bool, error) {
-	config := Config{SaveFolder: defaultFolder, PollSeconds: 5, Automatic: true}
+func LoadConfig(dir string, defaultFolder func() (string, error)) (Config, bool, error) {
+	config := Config{PollSeconds: 5, Automatic: true}
 	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
-	if errors.Is(err, os.ErrNotExist) {
+	firstRun := errors.Is(err, os.ErrNotExist)
+	if err != nil && !firstRun {
+		return config, false, err
+	}
+	hasFolder := false
+	if !firstRun {
+		hasFolder, err = decodeConfig(data, &config)
+		if err != nil {
+			return config, false, fmt.Errorf("invalid config.json: %w", err)
+		}
+	}
+	if !hasFolder {
+		config.SaveFolder, err = defaultFolder()
+		if err != nil {
+			return config, firstRun, fmt.Errorf("discover default save folder: %w", err)
+		}
+	}
+	if firstRun {
 		return config, true, SaveConfig(dir, config)
 	}
-	if err != nil {
-		return config, false, err
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return config, false, fmt.Errorf("invalid config.json: %w", err)
-	}
-	if config.PollSeconds < 1 || config.PollSeconds > 3600 {
-		return config, false, errors.New("poll_interval_seconds must be between 1 and 3600")
-	}
-	expanded, err := ExpandPath(config.SaveFolder)
-	if err != nil {
-		return config, false, err
-	}
-	if !filepath.IsAbs(expanded) {
-		return config, false, errors.New("save_folder must be an absolute path")
-	}
-	return config, false, nil
+	return config, false, config.Validate()
 }
 
 func SaveConfig(dir string, config Config) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
 	return atomicJSON(filepath.Join(dir, "config.json"), config)
+}
+
+// Validate checks a candidate without changing it or writing anything. Keep
+// environment-variable paths intact in configuration; expand them when used.
+func (config Config) Validate() error {
+	if config.PollSeconds < 1 || config.PollSeconds > 3600 {
+		return errors.New("poll_interval_seconds must be between 1 and 3600")
+	}
+	expanded, err := ExpandPath(config.SaveFolder)
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(expanded) {
+		return errors.New("save_folder must be an absolute path")
+	}
+	return nil
+}
+
+func decodeConfig(data []byte, config *Config) (bool, error) {
+	// encoding/json treats null scalar values as no-ops. Preserve defaults for
+	// omitted settings, but reject explicit nulls instead of silently defaulting.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return false, err
+	}
+	if fields == nil {
+		return false, errors.New("configuration must be a JSON object, not null")
+	}
+	hasFolder := false
+	for name, value := range fields {
+		if strings.EqualFold(name, "save_folder") {
+			hasFolder = true
+		}
+		if string(value) != "null" {
+			continue
+		}
+		for _, field := range []string{"save_folder", "poll_interval_seconds", "upload_automatically", "proxy_url", "upload_notice_shown"} {
+			if strings.EqualFold(name, field) {
+				return false, fmt.Errorf("%s must not be null", field)
+			}
+		}
+	}
+	return hasFolder, json.Unmarshal(data, config)
 }
 
 var variable = regexp.MustCompile(`%([^%]+)%`)

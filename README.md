@@ -1,15 +1,15 @@
 # CWG2 Uploader
 
-A Windows system-tray application written in Go. It watches CWG2 saves and automatically submits stable snapshots to the [CWG2 public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
+A Windows 10+ system-tray application written in Go. It watches CWG2 saves and automatically submits stable snapshots to the [CWG2 public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
 
 **Starting the app enables automatic uploads by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. This app is not affiliated with the leaderboard service. It never modifies game saves.
 
 ## Run
 
 1. Place `cwg2-uploader.exe` in a permanent location and launch it.
-2. Read the first-run notice. Look for the uploader in the Windows notification area (possibly under the hidden-icons arrow).
+2. Read the upload notice before the first normal run. Console mode prints it; dry runs leave the normal-run notice pending. Look for the uploader in the Windows notification area (possibly under the hidden-icons arrow).
 3. The app finds your Windows Documents folder and watches `Warcraft III\CustomMapData\CWG2`. Usually this is `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`.
-4. If needed, use **Choose save folder...** in the tray menu.
+4. If needed, use **Choose save folder...** in the tray menu. The picker closes when the uploader exits, including forced termination.
 
 The app polls every five seconds and waits at least five seconds of observed stability before uploading. Internet failures retry automatically. Invalid submissions stop retrying until the saves change or you choose **Upload now**.
 
@@ -19,8 +19,8 @@ The app polls every five seconds and waits at least five seconds of observed sta
 - **Last upload:** last confirmed successful submission.
 - **Automatic uploads:** uncheck to stop sending new saves automatically. Already queued uploads and retries continue until they finish.
 - **Upload now:** send the current saves even with Automatic uploads off. Stability checks and server retry delays still apply.
-- **Choose save folder...:** change the watched folder when no upload is in flight.
-- **Launch at Windows sign-in:** register or remove a current-user startup entry. No administrator rights needed. Moving the executable requires updating the entry; restart the app at its new location to do so.
+- **Choose save folder...:** change the watched folder at any time. Existing uploads continue; new saves replace older queued saves as usual.
+- **Launch at Windows sign-in:** register or remove a current-user startup entry. No administrator rights needed. The checkbox reads the Windows registration for this executable, not `config.json`; launching the app never rewrites that registration. After moving the executable, enable the option from its new location. Windows startup policy can independently prevent registered apps from running.
 - **Open leaderboard**, **Open logs**, and **Open config.json**.
 - **Quit:** cancel active network work, stop retries, and exit.
 
@@ -32,7 +32,7 @@ Application data lives in `%LOCALAPPDATA%\CWG2Uploader\`, not alongside the exec
 
 - `config.json`: human-editable settings.
 - `state.json`: the last successful snapshot fingerprint and upload summary.
-- `uploader.log`: automatically rotates at 2 MiB, keeping three previous files. Entries identify their source with `[app]`, `[poller]`, `[uploader]`, or `[main]`.
+- `uploader.log`: automatically rotates at 2 MiB, keeping three previous files. Individual entries are capped at 256 KiB, including a truncation marker; console output is not truncated. Entries identify their source with `[app]`, `[poller]`, or `[uploader]`.
 
 Example `config.json`:
 
@@ -41,14 +41,13 @@ Example `config.json`:
   "save_folder": "%USERPROFILE%\\Documents\\Warcraft III\\CustomMapData\\CWG2",
   "poll_interval_seconds": 5,
   "upload_automatically": true,
-  "launch_at_login": false,
   "proxy_url": ""
 }
 ```
 
-Initial discovery honors redirected Documents folders, including OneDrive. Configured `%VARIABLE%` references are expanded at runtime. Restart after manual configuration edits; tray changes are persisted immediately. To disable automatic uploading before a first real launch, create this configuration with `upload_automatically` set to `false`.
+Initial discovery honors redirected Documents folders, including OneDrive. Documents discovery runs only when the configuration is missing or `save_folder` is omitted; an explicit configured folder does not depend on Documents being available. The app-managed `upload_notice_shown` setting is saved only after the first normal-run notice is successfully presented. Missing or false means the notice is still pending; dry runs do not mark it shown. Configured `%VARIABLE%` references are expanded at runtime. Restart after manual configuration edits; tray changes are persisted immediately. Loading and saving share validation: the expanded save folder must be absolute and the polling interval must be between 1 and 3600 seconds. Invalid tray changes leave the existing configuration untouched. The old `launch_at_login` setting is ignored; startup registration is managed directly through Windows. To disable automatic uploading before a first real launch, create this configuration with `upload_automatically` set to `false`.
 
-Do not delete `state.json` unless you want existing saves submitted again. A corrupted configuration or state file produces an error rather than silently resetting preferences or upload history. Outgoing save contents are not logged. Error messages include a quoted preview of up to 512 response-body bytes, with a truncation marker when needed. Full error response bodies are additionally logged only when smaller than 4 KiB. Newlines and control characters are escaped, and valid UTF-8 characters are not split. A server response could echo sensitive data, so review logs before sharing them.
+Do not delete `state.json` unless you want existing saves submitted again. Invalid configuration or upload history stops startup rather than silently resetting preferences or history. Configuration must be a JSON object; present settings cannot be null, while omitted settings retain their defaults. Existing history must include a save folder, destination, fingerprint, upload timestamp, player, and positive hero count. Both configuration and history are validated before saving. Outgoing save contents are not logged. Error messages include a quoted preview of up to 512 response-body bytes, with a truncation marker when needed. Full error response bodies are additionally logged only when smaller than 4 KiB. Newlines and control characters are escaped, and valid UTF-8 characters are not split. A server response could echo sensitive data, so review logs before sharing them.
 
 ### Proxy settings
 
@@ -68,17 +67,16 @@ Windows system proxy settings and PAC scripts are not automatically imported. Re
 
 ## Supported save layout
 
-The first version reads only files directly inside the selected folder:
+The uploader reads regular `.pld` files directly inside the selected folder, matching names case-insensitively. Only `PRIVATE_*` names are excluded from eligibility. `ACCOUNT_VERIFY_*` and unknown `.pld` categories are eligible too; nested layouts and account selection are not supported yet.
 
-- `HERO_*.pld`
-- `ACCOUNT_*.pld`
-- `ENTITLEMENTS_*.pld`
-- `LEGACY_*.pld`
-- `SETTINGS_*.pld`
+Every eligible file settles independently by matching content hashes across polls spanning the quiet period. The scanner caches its last settled text and modification time. While a new version is changing, unreadable, or invalid, snapshots keep using the previous settled version; new candidate bytes never enter a snapshot early. A known settled content version can be reused immediately if it reappears, and timestamp-only changes do not require new settling.
 
-Matching is case-insensitive. `ACCOUNT_VERIFY_*` is always excluded. At least one hero and exactly one account file are required; folders containing multiple account files are rejected rather than guessing which account to submit. Nested layouts and account selection are not supported yet.
+- **Essential:** all `HERO_*`, `ACCOUNT_*` (including `ACCOUNT_VERIFY_*`), `ENTITLEMENTS_*`, `SETTINGS_*`, and `LEGACY_*` saves. At least one hero and one non-verification account are required. No snapshot is produced until every current essential filename has a settled version. Their quiet periods need not overlap, and a snapshot can combine versions settled on different scans. New essential filenames reopen the gate. Observed disappearance removes a filename's cache, so a later reappearance must settle again. Multiple-account validation remains the backend's responsibility.
+- **Supplementary:** eligible `.pld` files with unknown category prefixes, such as miscellaneous data. Use their cached settled versions when they fit the remaining budget; omit files with no available settled version rather than blocking essentials. The tray reports save warnings; logs explain skipped files or fallback to cached data. Manual uploads use these same settled-version rules.
 
-Files must be valid UTF-8. Safety limits are 8 MiB per file and 32 MiB per snapshot. Open handles do not prove completion; the app checks sizes and modification times before and after reads. This is a practical stability heuristic, not a game-level transaction guarantee.
+Safety limits are 8 MiB per file, 32 MiB per snapshot, 1,024 uploaded files, and 4,096 total directory entries (including ignored files and subdirectories). Limits apply to selected settled versions, not the total size of newer unsettled candidates on disk. Essential versions reserve their budgets first; an over-limit settled essential set fails rather than producing a partial snapshot. Supplementary versions use remaining capacity in deterministic filename order and may be evicted to admit essential updates. The retained settled payload cache is also limited to 32 MiB and 1,024 versions; candidate state contains only hashes/times, and supplementary read work has a remaining-byte budget. Cache rebuilding may temporarily hold old and new bounded caches; accepted uploads can also retain older immutable snapshots. Directory-enumeration failures and entry-limit overflow always reject the scan: an incomplete listing cannot prove the essential set is complete.
+
+Fingerprints cover the settled versions actually selected, not current candidate bytes, timestamps, or warnings. Candidate changes alone therefore do not trigger another upload. Each file's settled version advances only after its replacement settles; previously returned snapshots stay immutable. Open handles do not prove completion: reads check identity, size, and modification time before/after reading. The selected versions need not come from the same scan, and this is not a game-level transaction guarantee.
 
 ## Build and test
 
@@ -88,10 +86,12 @@ Requires Windows, Go 1.24 or newer, and Windows PowerShell for the built-in fold
 .\build.ps1
 ```
 
-This runs tests and `go vet`, then produces:
+This deletes the previous `dist` directory, runs tests and `go vet`, then produces:
 
 - `dist\cwg2-uploader.exe`: tray application, no console window.
 - `dist\cwg2-uploader-console.exe`: console-enabled build for diagnostics.
+
+It also includes README and license notices. Failed builds remove partial `dist` output; keep anything you want to preserve elsewhere. `scripts\notices.ps1` is an internal helper called by `build.ps1`, not a standalone command.
 
 Or run commands individually:
 
