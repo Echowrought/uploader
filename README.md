@@ -82,18 +82,28 @@ Fingerprints cover the settled versions actually selected, not current candidate
 
 Requires Windows, Go 1.24 or newer, and Windows PowerShell for the built-in folder picker. Prefer a current supported Go toolchain. No C compiler is required for a normal Windows build.
 
+Run checks without building release packages or changing `dist`:
+
+```powershell
+.\scripts\check.ps1
+```
+
+This runs pinned `actionlint` against the GitHub workflows, plus tests and `go vet` for both tray and console builds. The first run downloads the lint tool through Go; it does not add it to the application's dependencies. The script works regardless of your current directory when invoked by its path.
+
+To check and build:
+
 ```powershell
 .\build.ps1
 ```
 
-This deletes the previous `dist` directory, runs tests and `go vet`, then produces:
+This deletes the previous `dist` directory, runs `scripts\check.ps1`, then produces:
 
 - `dist\cwg2-uploader.exe`: starts in tray mode, without a console window.
 - `dist\cwg2-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
 
 Both binaries share the same application code. Windows records the GUI/console subsystem in the executable: the GUI build avoids an unwanted console window, while the console build works naturally with terminal output, redirection, and shell waiting. Keeping them separate avoids console attachment/allocation code and GUI-process shell quirks. The console build uses the `console` Go build tag; the regular build does not.
 
-It also includes README and license notices. Failed builds remove partial `dist` output; keep anything you want to preserve elsewhere. `scripts\notices.ps1` is an internal helper called by `build.ps1`, not a standalone command.
+It also includes the README, verification instructions, and license notices. Failed builds remove partial `dist` output; keep anything you want to preserve elsewhere. `scripts\notices.ps1` is an internal helper called by `build.ps1`, not a standalone command.
 
 Or run commands individually:
 
@@ -121,6 +131,16 @@ Automated tests use temporary save fixtures and local HTTP servers, not the real
 Distribute the tray executable; players do not need Go installed. Builds are currently unsigned, so Windows SmartScreen may display a warning. Keep third-party license notices with releases (see `THIRD_PARTY_NOTICES.md`).
 
 To uninstall, first disable **Launch at Windows sign-in**, quit, and delete the executable. Optionally delete `%LOCALAPPDATA%\CWG2Uploader\`. Removing local data does not remove submissions already held by the leaderboard service.
+
+### Verify a release
+
+Want to check where your download came from? See [VERIFYING.md](VERIFYING.md) for attestation checks and step-by-step instructions to rebuild the release tag and compare executable hashes. No team access is needed. Use the copy of that document linked from your release, so the instructions match its build settings.
+
+### Publishing and immutability
+
+The tag-triggered workflow creates a draft containing both packages, the attested build-info file, verification instructions, and generated change notes. Review and download-check the draft before publishing. Actions are pinned to full commit SHAs; update those pins deliberately when upgrading actions.
+
+An organization/repository administrator should enable **release immutability** in the repository's GitHub settings before publishing new releases. This setting is not enabled by the workflow. When enabled, publication locks the release assets and associated tag; the title and release notes remain editable. Finish attaching all assets while the release is a draft, and publish corrections as a new version. Do not assume previously published releases become immutable retroactively. Protect release tags and review workflow changes as well: provenance cannot protect against a malicious change authorized through the trusted workflow.
 
 ## License
 
