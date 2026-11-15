@@ -126,6 +126,10 @@ Dry run prints the eligible file count and exits after reading a valid stable sn
 
 Automated tests use temporary save fixtures and local HTTP servers, not the real leaderboard. Timer-heavy app tests use Go's `testing/synctest` virtual clock: production settling periods, retries, and deadline checks are preserved without waiting real seconds. Filesystem limits and subprocess tests still exercise real OS operations. Scanner boundary tests pass a smaller per-instance policy (16 entries, 8 saves, 64-byte files, 256-byte snapshots) through the same code as production. Separate checks preserve the production defaults, multi-batch enumeration, and a full-size 8 MiB file boundary. A live upload still needs compatibility verification with explicitly approved saves.
 
+### Memory profiling build (no uploads)
+
+See [cmd/profile/readme.md](cmd/profile/readme.md) for profiling builds, usage, safety guarantees, and interpreting memory measurements.
+
 ## Distribution
 
 Distribute the tray executable; players do not need Go installed. Builds are currently unsigned, so Windows SmartScreen may display a warning. Keep third-party license notices with releases (see `THIRD_PARTY_NOTICES.md`).

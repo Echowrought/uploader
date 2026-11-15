@@ -1,3 +1,4 @@
 /dist/
+/profiles/
 *.test.exe
 /coverage.out
