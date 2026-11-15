@@ -5,13 +5,32 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwg2uploader/internal/leaderboard"
 	"cwg2uploader/internal/saves"
 	"cwg2uploader/internal/storage"
 )
+
+func TestFolderPollerUsesProductionFileLimit(t *testing.T) {
+	application, _ := fixtureApp(t)
+	text := strings.Repeat("x", 65)
+	if err := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	poller := fixtureFolderPoller(application)
+	now := time.Now()
+
+	poller.poll(context.Background(), now, true)
+	event := poller.poll(context.Background(), now.Add(5*time.Second), true)
+
+	if event.kind != pollUpdated || event.update == nil || event.update.snapshot.Files["HERO_01_123.pld"].Text != text {
+		t.Fatalf("production poller used scaled test limits: %+v", event)
+	}
+}
 
 func TestFolderPollerEmitsStableSnapshotOnlyOnce(t *testing.T) {
 	application, _ := fixtureApp(t)
@@ -151,30 +170,32 @@ func TestCoordinatorDetectsChangesDuringAnActiveUpload(t *testing.T) {
 
 func TestCoordinatorDeliversNewSnapshotBeforeRetry(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	now := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		state := fixtureCoordinator(t, application)
+		now := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	state.tick(ctx, now)
-	state.tick(ctx, now.Add(5*time.Second))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("latest data"), 0600)
-	state.tick(ctx, now.Add(6*time.Second))
-	state.tick(ctx, now.Add(11*time.Second))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
+		state.tick(ctx, now)
+		state.tick(ctx, now.Add(5*time.Second))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+		writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("latest data"), 0600)
+		state.tick(ctx, now.Add(6*time.Second))
+		state.tick(ctx, now.Add(11*time.Second))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		second := nextRequest(t, ctx, client)
 
-	if writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "latest data" || second.startedAt.Before(retry.retryAt) {
-		t.Fatal("retry used stale data or bypassed Retry-After")
-	}
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if second.payload.Files["HERO_01_123.pld"].Text != "latest data" || second.startedAt.Before(retry.retryAt) {
+			t.Fatal("retry used stale data or bypassed Retry-After")
+		}
+	})
 }
 
 func TestFolderPollerEmitsAgainAfterRestart(t *testing.T) {
@@ -224,31 +245,33 @@ func TestRunStateSeedsPollerFromMatchingSuccessfulUpload(t *testing.T) {
 
 func TestCoordinatorAutomaticOffFinishesQueuedWorkAndRetries(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	application.Config.Automatic = false
-	state := fixtureCoordinator(t, application)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		application.Config.Automatic = false
+		state := fixtureCoordinator(t, application)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	_ = nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+		queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
+		_ = nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
 
-	if queueErr != nil {
-		t.Fatal(queueErr)
-	}
-	if application.Config.Automatic || application.LastUpload.Fingerprint != "pending" {
-		t.Fatal("accepted work did not finish independently of automatic polling")
-	}
-	if state.poller.lastEmittedFingerprint != "" {
-		t.Fatal("retry required another folder event")
-	}
+		if queueErr != nil {
+			t.Fatal(queueErr)
+		}
+		if application.Config.Automatic || application.LastUpload.Fingerprint != "pending" {
+			t.Fatal("accepted work did not finish independently of automatic polling")
+		}
+		if state.poller.lastEmittedFingerprint != "" {
+			t.Fatal("retry required another folder event")
+		}
+	})
 }
 
 func TestCommandUploadLatchesEmissionWhileAutomaticOff(t *testing.T) {

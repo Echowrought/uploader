@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwg2uploader/internal/leaderboard"
@@ -121,64 +124,68 @@ func TestUploaderQueueIsSafeForConcurrentCallers(t *testing.T) {
 
 func TestUploaderRetriesOnItsOwnTimer(t *testing.T) {
 	t.Parallel()
-	ctx, uploader, _, client := fixtureUploader(t)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, uploader, _, client := fixtureUploader(t)
 
-	queueErr := uploader.queue(ctx, fixtureFolderUpdate("retry", "save"))
-	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-	retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
-	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+		queueErr := uploader.queue(ctx, fixtureFolderUpdate("retry", "save"))
+		_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+		retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
+		_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
 
-	if queueErr != nil {
-		t.Fatal(queueErr)
-	}
-	if retry.saveFolder != "saves" || retry.id != success.id {
-		t.Fatal("retry event did not identify its failed attempt")
-	}
-	if second.startedAt.Before(retry.retryAt) {
-		t.Fatal("retry started before Retry-After elapsed")
-	}
-	if !reflect.DeepEqual(first.payload, second.payload) || success.fingerprint != "retry" {
-		t.Fatal("retry required a new event or changed the data")
-	}
+		if queueErr != nil {
+			t.Fatal(queueErr)
+		}
+		if retry.saveFolder != "saves" || retry.id != success.id {
+			t.Fatal("retry event did not identify its failed attempt")
+		}
+		if second.startedAt.Before(retry.retryAt) {
+			t.Fatal("retry started before Retry-After elapsed")
+		}
+		if !reflect.DeepEqual(first.payload, second.payload) || success.fingerprint != "retry" {
+			t.Fatal("retry required a new event or changed the data")
+		}
+	})
 }
 
 func TestUploaderRetryUsesNewerSnapshotQueuedDuringRequest(t *testing.T) {
 	t.Parallel()
-	ctx, uploader, _, client := fixtureUploader(t)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, uploader, _, client := fixtureUploader(t)
 
-	old := fixtureFolderUpdate("old", "old save")
-	old.id = 1
-	replacement := fixtureFolderUpdate("new", "new save")
-	replacement.id = 2
+		old := fixtureFolderUpdate("old", "old save")
+		old.id = 1
+		replacement := fixtureFolderUpdate("new", "new save")
+		replacement.id = 2
 
-	firstErr := uploader.queue(ctx, old)
-	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
-	first := nextRequest(t, ctx, client)
-	newErr := uploader.queue(ctx, replacement)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
-	_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
+		firstErr := uploader.queue(ctx, old)
+		_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+		first := nextRequest(t, ctx, client)
+		newErr := uploader.queue(ctx, replacement)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
+		retry := nextUploaderEvent[uploadRetryScheduled](t, ctx, uploader)
+		_ = nextUploaderEvent[uploadStarted](t, ctx, uploader)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		success := nextUploaderEvent[uploadSucceeded](t, ctx, uploader)
 
-	if firstErr != nil || newErr != nil {
-		t.Fatalf("queue errors: %v, %v", firstErr, newErr)
-	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "new save" || success.fingerprint != "new" {
-		t.Fatal("failure restored old data over a newer pending snapshot")
-	}
-	if retry.saveFolder != "saves" || retry.id != old.id || success.id != replacement.id {
-		t.Fatal("retry event identified pending data instead of the failed attempt")
-	}
-	if second.startedAt.Before(retry.retryAt) {
-		t.Fatal("new pending data bypassed retry backoff")
-	}
+		if firstErr != nil || newErr != nil {
+			t.Fatalf("queue errors: %v, %v", firstErr, newErr)
+		}
+		if second.payload.Files["HERO_01_123.pld"].Text != "new save" || success.fingerprint != "new" {
+			t.Fatal("failure restored old data over a newer pending snapshot")
+		}
+		if retry.saveFolder != "saves" || retry.id != old.id || success.id != replacement.id {
+			t.Fatal("retry event identified pending data instead of the failed attempt")
+		}
+		if second.startedAt.Before(retry.retryAt) {
+			t.Fatal("new pending data bypassed retry backoff")
+		}
+	})
 }
 
 func TestUploaderReemittedRejectedSnapshotIsAccepted(t *testing.T) {
@@ -231,6 +238,34 @@ func TestUploaderSupersededFailureDoesNotRejectNewSnapshot(t *testing.T) {
 	if second.payload.Files["HERO_01_123.pld"].Text != "new save" || success.fingerprint != "new" {
 		t.Fatal("new snapshot did not finish")
 	}
+}
+
+func TestRetryWaitHonorsExactDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		events := make(chan uploadEvent, 1)
+		finished := make(chan bool, 1)
+		logger := log.New(io.Discard, "", 0)
+		start := time.Now()
+		const delay = 6 * time.Second
+
+		go func() { finished <- waitForRetry(ctx, events, logger, uploadRetryScheduled{}, delay) }()
+		retry := (<-events).(uploadRetryScheduled)
+		time.Sleep(delay - time.Nanosecond)
+		synctest.Wait()
+		finishedEarly := len(finished) != 0
+		time.Sleep(time.Nanosecond)
+		completed := <-finished
+		elapsed := time.Since(start)
+
+		if finishedEarly || !completed || elapsed != delay {
+			t.Fatalf("retry timing: early=%v, completed=%v, elapsed=%s", finishedEarly, completed, elapsed)
+		}
+		if !retry.retryAt.Equal(start.Add(delay)) {
+			t.Fatalf("retry deadline=%s, want=%s", retry.retryAt, start.Add(delay))
+		}
+	})
 }
 
 func TestRetryDelay(t *testing.T) {

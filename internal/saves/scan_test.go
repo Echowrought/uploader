@@ -13,7 +13,7 @@ import (
 
 func TestScannerWaitsForQuietPeriod(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 
 	_, firstErr := scanner.Scan(context.Background(), now)
@@ -36,7 +36,7 @@ func TestScannerWaitsForQuietPeriod(t *testing.T) {
 
 func TestScannerDetectsContentChangesWithUnchangedMetadata(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	_, firstErr := scanner.Scan(context.Background(), now)
 	path := filepath.Join(folder, "HERO_01_123.pld")
@@ -56,7 +56,7 @@ func TestScannerDetectsContentChangesWithUnchangedMetadata(t *testing.T) {
 
 func TestScannerResetsQuietPeriodOnChange(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	_, _ = scanner.Scan(context.Background(), now)
 
@@ -74,7 +74,7 @@ func TestScannerResetsQuietPeriodOnChange(t *testing.T) {
 
 func TestScannerCoreReversionRestartsQuietPeriod(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	path := filepath.Join(folder, "HERO_01_123.pld")
 	now := time.Now()
 
@@ -96,7 +96,7 @@ func TestScannerCoreReversionRestartsQuietPeriod(t *testing.T) {
 
 func TestScannerReadFailureKeepsLastSettledVersionUntilRecoverySettles(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	path := filepath.Join(folder, "HERO_01_123.pld")
 	now := time.Now()
 
@@ -124,7 +124,7 @@ func TestScannerRequiresAccount(t *testing.T) {
 	if err := os.Remove(filepath.Join(folder, "ACCOUNT_player_123.pld")); err != nil {
 		t.Fatal(err)
 	}
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 
 	_, _ = scanner.Scan(context.Background(), time.Now())
 	_, err := scanner.Scan(context.Background(), time.Now())
@@ -137,7 +137,7 @@ func TestScannerRequiresAccount(t *testing.T) {
 func TestScannerIncludesMultipleAccounts(t *testing.T) {
 	folder := fixtureFolder(t)
 	writeFixture(t, filepath.Join(folder, "ACCOUNT_other_456.pld"), "account")
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
@@ -153,7 +153,7 @@ func TestScannerIncludesMultipleAccounts(t *testing.T) {
 
 func TestScannerFingerprintIsDeterministic(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 	_, _ = scanner.Scan(context.Background(), time.Now())
 
 	first, firstErr := scanner.Scan(context.Background(), time.Now())
@@ -169,7 +169,7 @@ func TestScannerFingerprintIsDeterministic(t *testing.T) {
 
 func TestScannerFingerprintIgnoresModificationTime(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	path := filepath.Join(folder, "HERO_01_123.pld")
 	timestamp := time.UnixMilli(1800000000456)
@@ -195,7 +195,7 @@ func TestScannerReadsMultipleDirectoryBatches(t *testing.T) {
 	for i := directoryBatchSize; i > 0; i-- {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "save")
 	}
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 
 	_, firstErr := scanner.Scan(context.Background(), now)
@@ -215,7 +215,7 @@ func TestInventorySortsMetadataAcrossBatches(t *testing.T) {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "save")
 	}
 
-	entries, err := inventory(context.Background(), folder)
+	entries, err := inventory(context.Background(), folder, DefaultLimits().DirectoryEntries)
 
 	if err != nil {
 		t.Fatal(err)
@@ -232,11 +232,12 @@ func TestInventorySortsMetadataAcrossBatches(t *testing.T) {
 
 func TestInventoryAcceptsDirectoryEntryLimit(t *testing.T) {
 	folder := t.TempDir()
-	for i := 0; i < maxDirectoryEntries; i++ {
+	limits := smallLimits()
+	for i := 0; i < limits.DirectoryEntries; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
 
-	entries, err := inventory(context.Background(), folder)
+	entries, err := inventory(context.Background(), folder, limits.DirectoryEntries)
 
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("inventory = %v, %v", entries, err)
@@ -245,10 +246,11 @@ func TestInventoryAcceptsDirectoryEntryLimit(t *testing.T) {
 
 func TestScannerRejectsTooManyDirectoryEntriesWithoutPartialSnapshot(t *testing.T) {
 	folder := fixtureFolder(t)
-	for i := 0; i < maxDirectoryEntries-3; i++ {
+	limits := smallLimits()
+	for i := 0; i < limits.DirectoryEntries-3; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, limits)
 
 	snapshot, err := scanner.Scan(context.Background(), time.Now())
 
@@ -262,23 +264,25 @@ func TestScannerRejectsTooManyDirectoryEntriesWithoutPartialSnapshot(t *testing.
 
 func TestInventoryAcceptsEligibleFileLimit(t *testing.T) {
 	folder := t.TempDir()
-	for i := 0; i < maxSaveFiles; i++ {
+	limits := smallLimits()
+	for i := 0; i < limits.SaveFiles; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "")
 	}
 
-	entries, err := inventory(context.Background(), folder)
+	entries, err := inventory(context.Background(), folder, limits.DirectoryEntries)
 
-	if err != nil || len(entries) != maxSaveFiles {
+	if err != nil || len(entries) != limits.SaveFiles {
 		t.Fatalf("inventory count = %d, error = %v", len(entries), err)
 	}
 }
 
 func TestScannerRejectsTooManyEligibleFilesWithoutPartialSnapshot(t *testing.T) {
 	folder := fixtureFolder(t)
-	for i := 0; i < maxSaveFiles-1; i++ {
+	limits := smallLimits()
+	for i := 0; i < limits.SaveFiles-1; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "")
 	}
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, limits)
 
 	snapshot, err := scanner.Scan(context.Background(), time.Now())
 
@@ -291,7 +295,7 @@ func TestScannerRejectsTooManyEligibleFilesWithoutPartialSnapshot(t *testing.T) 
 }
 
 func TestScannerCancellationDoesNotReadMissingFolder(t *testing.T) {
-	scanner := Scanner{Folder: filepath.Join(t.TempDir(), "missing")}
+	scanner := NewScanner(filepath.Join(t.TempDir(), "missing"), 0, DefaultLimits())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -306,7 +310,7 @@ func TestScannerCancellationDoesNotReadMissingFolder(t *testing.T) {
 }
 
 func TestScannerPreservesDeadlineExceeded(t *testing.T) {
-	scanner := Scanner{Folder: fixtureFolder(t)}
+	scanner := NewScanner(fixtureFolder(t), 0, DefaultLimits())
 	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
 	defer cancel()
 
@@ -318,7 +322,7 @@ func TestScannerPreservesDeadlineExceeded(t *testing.T) {
 }
 
 func TestScannerRecoversAfterCancellation(t *testing.T) {
-	scanner := Scanner{Folder: fixtureFolder(t)}
+	scanner := NewScanner(fixtureFolder(t), 0, DefaultLimits())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	now := time.Now()
@@ -340,7 +344,7 @@ func TestInventoryCancellationDoesNotReadMissingFolder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	entries, err := inventory(ctx, folder)
+	entries, err := inventory(ctx, folder, DefaultLimits().DirectoryEntries)
 
 	if !errors.Is(err, context.Canceled) || entries != nil {
 		t.Fatalf("inventory = %v, %v; want cancellation", entries, err)
@@ -352,7 +356,7 @@ func TestReadFileCancellationDoesNotReadMissingFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	text, err := readFile(ctx, path, metadata{})
+	text, err := readFile(ctx, path, metadata{}, DefaultLimits().FileBytes)
 
 	if !errors.Is(err, context.Canceled) || text != "" {
 		t.Fatalf("read = %q, %v; want cancellation", text, err)
@@ -361,7 +365,7 @@ func TestReadFileCancellationDoesNotReadMissingFile(t *testing.T) {
 
 func TestScannerPreservesBOMAndFingerprintsOriginalText(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 	_, _ = scanner.Scan(context.Background(), now)
 	first, firstErr := scanner.Scan(context.Background(), now)

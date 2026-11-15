@@ -13,7 +13,7 @@ func TestScannerSupplementaryUpdatesUseLastSettledVersion(t *testing.T) {
 	folder := fixtureFolder(t)
 	path := filepath.Join(folder, "MISC_player.pld")
 	writeFixture(t, path, "old misc")
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
@@ -37,7 +37,7 @@ func TestScannerInvalidSupplementaryCandidateKeepsSettledVersion(t *testing.T) {
 	folder := fixtureFolder(t)
 	path := filepath.Join(folder, "MISC_player.pld")
 	writeFixture(t, path, "valid misc")
-	scanner := Scanner{Folder: folder}
+	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
@@ -55,21 +55,22 @@ func TestScannerInvalidSupplementaryCandidateKeepsSettledVersion(t *testing.T) {
 
 func TestScannerOversizedEssentialCandidateKeepsSettledVersion(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder}
+	limits := smallLimits()
+	scanner := NewScanner(folder, 0, limits)
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
 	first, firstErr := scanner.Scan(context.Background(), now)
-	writeSizedFixture(t, filepath.Join(folder, "HERO_01_123.pld"), maxFileBytes+1)
+	writeSizedFixture(t, filepath.Join(folder, "HERO_01_123.pld"), limits.FileBytes+1)
 	fallback, fallbackErr := scanner.Scan(context.Background(), now)
 
 	if firstErr != nil || fallbackErr != nil {
 		t.Fatalf("scan errors: %v, %v", firstErr, fallbackErr)
 	}
-	if fallback.Files["HERO_01_123.pld"].Text != "hero data!!" || fallback.Fingerprint != first.Fingerprint || len(fallback.Warnings) != 1 || !strings.Contains(fallback.Warnings[0], "8 MiB") {
+	if fallback.Files["HERO_01_123.pld"].Text != "hero data!!" || fallback.Fingerprint != first.Fingerprint || len(fallback.Warnings) != 1 || !strings.Contains(fallback.Warnings[0], "64 bytes") {
 		t.Fatal("on-disk candidate limits prevented use of a valid settled essential version")
 	}
-	assertSettledCacheWithinLimits(t, &scanner)
+	assertSettledCacheWithinLimits(t, scanner, limits)
 }
 
 func TestScannerBudgetsSettledEssentialVersionsRatherThanCandidates(t *testing.T) {
@@ -77,14 +78,15 @@ func TestScannerBudgetsSettledEssentialVersionsRatherThanCandidates(t *testing.T
 	for i := 2; i <= 4; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%02d_123.pld", i)), "old hero")
 	}
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	limits := smallLimits()
+	scanner := NewScanner(folder, 5*time.Second, limits)
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
 	first, firstErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
-	writeSizedFixture(t, filepath.Join(folder, "ACCOUNT_player_123.pld"), maxFileBytes)
+	writeSizedFixture(t, filepath.Join(folder, "ACCOUNT_player_123.pld"), limits.FileBytes)
 	for i := 1; i <= 4; i++ {
-		writeSizedFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%02d_123.pld", i)), maxFileBytes)
+		writeSizedFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%02d_123.pld", i)), limits.FileBytes)
 	}
 	pending, pendingErr := scanner.Scan(context.Background(), now.Add(6*time.Second))
 	overflow, overflowErr := scanner.Scan(context.Background(), now.Add(11*time.Second))
@@ -92,19 +94,19 @@ func TestScannerBudgetsSettledEssentialVersionsRatherThanCandidates(t *testing.T
 	_, _ = scanner.Scan(context.Background(), now.Add(12*time.Second))
 	recovered, recoveredErr := scanner.Scan(context.Background(), now.Add(17*time.Second))
 
-	if firstErr != nil || pendingErr != nil || overflowErr == nil || !strings.Contains(overflowErr.Error(), "32 MiB") || recoveredErr != nil {
+	if firstErr != nil || pendingErr != nil || overflowErr == nil || !strings.Contains(overflowErr.Error(), "256 bytes") || recoveredErr != nil {
 		t.Fatalf("scan errors: %v, %v, %v, %v", firstErr, pendingErr, overflowErr, recoveredErr)
 	}
 	if pending.Fingerprint != first.Fingerprint || overflow.Files != nil {
 		t.Fatal("candidate sizes blocked valid cached data or an over-limit settled set produced a snapshot")
 	}
-	if len(recovered.Files) != 5 || len(recovered.Files["HERO_03_123.pld"].Text) != maxFileBytes || recovered.Files["HERO_04_123.pld"].Text != "" {
+	if len(recovered.Files) != 5 || int64(len(recovered.Files["HERO_03_123.pld"].Text)) != limits.FileBytes || recovered.Files["HERO_04_123.pld"].Text != "" {
 		t.Fatal("settled shrink did not free capacity for essential growth in the same scan")
 	}
-	assertSettledCacheWithinLimits(t, &scanner)
+	assertSettledCacheWithinLimits(t, scanner, limits)
 }
 
-func assertSettledCacheWithinLimits(t *testing.T, scanner *Scanner) {
+func assertSettledCacheWithinLimits(t *testing.T, scanner *Scanner, limits Limits) {
 	t.Helper()
 	var bytes int64
 	count := 0
@@ -114,7 +116,7 @@ func assertSettledCacheWithinLimits(t *testing.T, scanner *Scanner) {
 			count++
 		}
 	}
-	if bytes > maxSnapshotBytes || count > maxSaveFiles {
+	if bytes > limits.SnapshotBytes || count > limits.SaveFiles {
 		t.Fatalf("cache exceeds payload limits: %d bytes, %d versions", bytes, count)
 	}
 }

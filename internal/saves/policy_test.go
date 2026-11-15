@@ -85,39 +85,42 @@ func TestSettleKnownVersionRefreshesMetadataWithoutMutatingPreviousVersion(t *te
 }
 
 func TestAdmissionEssentialReplacementUsesReservedCapacity(t *testing.T) {
+	limits := smallLimits()
 	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
 	candidate := fileSettlement{observed: true, settled: &File{Text: "next", Mtime: 2}}
-	result := scanResult{states: make(map[string]fileSettlement), files: make(map[string]File), bytes: maxSnapshotBytes - 1}
+	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 1}
 
 	err := result.admitEssential("HERO_1.pld", previous, candidate, nil)
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.bytes != maxSnapshotBytes || result.files["HERO_1.pld"] != *candidate.settled || result.states["HERO_1.pld"] != candidate || len(result.warnings) != 0 {
+	if result.bytes != limits.SnapshotBytes || result.files["HERO_1.pld"] != *candidate.settled || result.states["HERO_1.pld"] != candidate || len(result.warnings) != 0 {
 		t.Fatal("essential replacement did not reuse its reserved capacity")
 	}
 }
 
 func TestAdmissionEssentialOverflowRetainsPreviousVersionAndCandidateObservation(t *testing.T) {
+	limits := smallLimits()
 	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
 	candidate := fileSettlement{hash: sha256.Sum256([]byte("next")), observed: true, settled: &File{Text: "next", Mtime: 2}}
-	result := scanResult{states: make(map[string]fileSettlement), files: make(map[string]File), bytes: maxSnapshotBytes}
+	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes}
 
 	err := result.admitEssential("HERO_1.pld", previous, candidate, nil)
 	retained := result.states["HERO_1.pld"]
 
-	if err == nil || !strings.Contains(err.Error(), "32 MiB") {
+	if err == nil || !strings.Contains(err.Error(), "256 bytes") {
 		t.Fatalf("essential overflow did not block publication: %v", err)
 	}
-	if result.bytes != maxSnapshotBytes || result.files["HERO_1.pld"] != *previous.settled || retained.settled != previous.settled || retained.hash != candidate.hash || !retained.observed {
+	if result.bytes != limits.SnapshotBytes || result.files["HERO_1.pld"] != *previous.settled || retained.settled != previous.settled || retained.hash != candidate.hash || !retained.observed {
 		t.Fatal("overflow lost the old payload or candidate observation, or exceeded capacity")
 	}
 }
 
 func TestAdmissionEssentialFailedCandidateRetainsVersionWithWarning(t *testing.T) {
+	limits := smallLimits()
 	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	result := scanResult{states: make(map[string]fileSettlement), files: make(map[string]File), bytes: 3}
+	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: 3}
 
 	err := result.admitEssential("HERO_1.pld", previous, previous, errors.New("read failed"))
 
@@ -130,13 +133,14 @@ func TestAdmissionEssentialFailedCandidateRetainsVersionWithWarning(t *testing.T
 }
 
 func TestAdmissionSupplementaryReplacementFallsBackWhenPreviousVersionFits(t *testing.T) {
+	limits := smallLimits()
 	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
 	candidate := fileSettlement{observed: true, settled: &File{Text: "larger", Mtime: 2}}
-	result := scanResult{states: make(map[string]fileSettlement), files: make(map[string]File), bytes: maxSnapshotBytes - 4}
+	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 4}
 
 	result.admitSupplementary("MISC.pld", previous, candidate, nil)
 
-	if result.bytes != maxSnapshotBytes-1 || result.files["MISC.pld"] != *previous.settled || result.states["MISC.pld"].settled != previous.settled {
+	if result.bytes != limits.SnapshotBytes-1 || result.files["MISC.pld"] != *previous.settled || result.states["MISC.pld"].settled != previous.settled {
 		t.Fatal("oversized supplementary replacement did not fall back to the fitting version")
 	}
 	if len(result.warnings) != 1 || !strings.Contains(result.warnings[0], `use settled save "MISC.pld"`) {
@@ -145,14 +149,15 @@ func TestAdmissionSupplementaryReplacementFallsBackWhenPreviousVersionFits(t *te
 }
 
 func TestAdmissionSupplementaryEvictsVersionsWhenNeitherFits(t *testing.T) {
+	limits := smallLimits()
 	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
 	candidate := fileSettlement{observed: true, settled: &File{Text: "larger", Mtime: 2}}
-	result := scanResult{states: make(map[string]fileSettlement), files: make(map[string]File), bytes: maxSnapshotBytes - 2}
+	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 2}
 
 	result.admitSupplementary("MISC.pld", previous, candidate, nil)
 	_, included := result.files["MISC.pld"]
 
-	if included || result.states["MISC.pld"].settled != nil || !result.states["MISC.pld"].observed || result.bytes != maxSnapshotBytes-2 {
+	if included || result.states["MISC.pld"].settled != nil || !result.states["MISC.pld"].observed || result.bytes != limits.SnapshotBytes-2 {
 		t.Fatal("unfitting optional payload was retained or its observation was lost")
 	}
 	if len(result.warnings) != 1 || !strings.Contains(result.warnings[0], `skip supplementary save "MISC.pld"`) {

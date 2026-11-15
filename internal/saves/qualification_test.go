@@ -14,7 +14,7 @@ func TestScannerCombinesLastSettledVersionsAndKeepsTheirModificationTimes(t *tes
 	hero, account := filepath.Join(folder, "HERO_01_123.pld"), filepath.Join(folder, "ACCOUNT_player_123.pld")
 	writeFixture(t, hero, "123")
 	writeFixture(t, account, "ABC")
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	updatedTime := time.UnixMilli(1800000000456)
 
@@ -44,7 +44,7 @@ func TestScannerCombinesLastSettledVersionsAndKeepsTheirModificationTimes(t *tes
 
 func TestScannerEssentialFilesSettleWithoutOverlappingQuietPeriods(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	hero, account := filepath.Join(folder, "HERO_01_123.pld"), filepath.Join(folder, "ACCOUNT_player_123.pld")
 	now := time.Now()
 
@@ -66,7 +66,7 @@ func TestScannerEssentialFilesSettleWithoutOverlappingQuietPeriods(t *testing.T)
 
 func TestScannerNewEssentialFileReopensGateWithoutLosingSettledVersions(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	_, _ = scanner.Scan(context.Background(), now)
 	_, firstErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
@@ -87,7 +87,7 @@ func TestScannerNewEssentialFileReopensGateWithoutLosingSettledVersions(t *testi
 
 func TestScannerUnsettledReadFailureDoesNotBlockOtherFilesFromSettling(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	hero, account := filepath.Join(folder, "HERO_01_123.pld"), filepath.Join(folder, "ACCOUNT_player_123.pld")
 	now := time.Now()
 
@@ -110,7 +110,7 @@ func TestScannerUnsettledReadFailureDoesNotBlockOtherFilesFromSettling(t *testin
 
 func TestScannerReappearingEssentialFilenameMustSettleAgain(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	path := filepath.Join(folder, "HERO_01_123.pld")
 	now := time.Now()
 	_, _ = scanner.Scan(context.Background(), now)
@@ -132,7 +132,7 @@ func TestScannerReappearingEssentialFilenameMustSettleAgain(t *testing.T) {
 
 func TestScannerRemovedUnsettledFileNoLongerBlocksGate(t *testing.T) {
 	folder := fixtureFolder(t)
-	scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	path := filepath.Join(folder, "HERO_02_123.pld")
 	now := time.Now()
 	_, _ = scanner.Scan(context.Background(), now)
@@ -153,8 +153,8 @@ func TestScannerRemovedUnsettledFileNoLongerBlocksGate(t *testing.T) {
 
 func TestNewScannerDoesNotInheritSettledVersions(t *testing.T) {
 	folder := fixtureFolder(t)
-	first := Scanner{Folder: folder, Quiet: 5 * time.Second}
-	second := Scanner{Folder: folder, Quiet: 5 * time.Second}
+	first := NewScanner(folder, 5*time.Second, DefaultLimits())
+	second := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 
 	_, _ = first.Scan(context.Background(), now)

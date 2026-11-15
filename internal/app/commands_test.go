@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwg2uploader/internal/leaderboard"
@@ -112,42 +113,44 @@ func TestCommandFolderChangePreservesAcceptedSnapshotsAndOrigin(t *testing.T) {
 
 func TestCommandFolderChangeRetainsBackoffAndCoalescesNewSource(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	replacementApp, _ := fixtureApp(t)
-	replacement := replacementApp.Config.SaveFolder
-	if err := os.WriteFile(filepath.Join(replacement, "HERO_01_123.pld"), []byte("new folder save"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	state := fixtureCoordinator(t, application)
-	old := fixtureFolderUpdate("old", "old save")
-	old.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		replacementApp, _ := fixtureApp(t)
+		replacement := replacementApp.Config.SaveFolder
+		if err := os.WriteFile(filepath.Join(replacement, "HERO_01_123.pld"), []byte("new folder save"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		state := fixtureCoordinator(t, application)
+		old := fixtureFolderUpdate("old", "old save")
+		old.saveFolder = application.Config.SaveFolder
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	queueErr := state.uploader.queue(ctx, old)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
-	state.tick(ctx, time.Now().Add(6*time.Second))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+		queueErr := state.uploader.queue(ctx, old)
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+		commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
+		state.tick(ctx, time.Now().Add(6*time.Second))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
 
-	if queueErr != nil || commandErr != nil {
-		t.Fatalf("errors: %v, %v", queueErr, commandErr)
-	}
-	if second.startedAt.Before(retry.retryAt) {
-		t.Fatal("changing folders bypassed delivery backoff")
-	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "new folder save" {
-		t.Fatal("new source did not replace older pending data")
-	}
-	if application.LastUpload.SaveFolder != replacement || application.LastUpload.Fingerprint != state.poller.lastEmittedFingerprint {
-		t.Fatal("new source completion was not recorded correctly")
-	}
+		if queueErr != nil || commandErr != nil {
+			t.Fatalf("errors: %v, %v", queueErr, commandErr)
+		}
+		if second.startedAt.Before(retry.retryAt) {
+			t.Fatal("changing folders bypassed delivery backoff")
+		}
+		if second.payload.Files["HERO_01_123.pld"].Text != "new folder save" {
+			t.Fatal("new source did not replace older pending data")
+		}
+		if application.LastUpload.SaveFolder != replacement || application.LastUpload.Fingerprint != state.poller.lastEmittedFingerprint {
+			t.Fatal("new source completion was not recorded correctly")
+		}
+	})
 }
 
 func TestCommandFolderRejectsInvalidPathsWithoutChangingSelection(t *testing.T) {
@@ -199,34 +202,36 @@ func TestSaveConfigRejectsInvalidCandidateWithoutCommittingIt(t *testing.T) {
 
 func TestCommandUploadNowKeepsRetryDeadline(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		state := fixtureCoordinator(t, application)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("old", "old save"))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	commandErr := state.handleCommand(ctx, Command{Kind: "upload"})
-	requestLatched := state.poller.forceNextEmission
-	state.tick(ctx, time.Now().Add(6*time.Second))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
+		queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("old", "old save"))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
+		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+		commandErr := state.handleCommand(ctx, Command{Kind: "upload"})
+		requestLatched := state.poller.forceNextEmission
+		state.tick(ctx, time.Now().Add(6*time.Second))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		second := nextRequest(t, ctx, client)
 
-	if queueErr != nil || commandErr != nil {
-		t.Fatalf("errors: %v, %v", queueErr, commandErr)
-	}
-	if !requestLatched {
-		t.Fatal("explicit upload request was not latched")
-	}
-	if second.startedAt.Before(retry.retryAt) {
-		t.Fatal("Upload now bypassed Retry-After")
-	}
-	if second.payload.Files["HERO_01_123.pld"].Text != "save" {
-		t.Fatal("fresh snapshot was not used for the retry")
-	}
+		if queueErr != nil || commandErr != nil {
+			t.Fatalf("errors: %v, %v", queueErr, commandErr)
+		}
+		if !requestLatched {
+			t.Fatal("explicit upload request was not latched")
+		}
+		if second.startedAt.Before(retry.retryAt) {
+			t.Fatal("Upload now bypassed Retry-After")
+		}
+		if second.payload.Files["HERO_01_123.pld"].Text != "save" {
+			t.Fatal("fresh snapshot was not used for the retry")
+		}
+	})
 }
 
 func TestCommandUnknownDoesNotPoll(t *testing.T) {

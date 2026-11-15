@@ -7,9 +7,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
     go vet ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
-    go test -tags=console ./...
+    # Only the entry point changes with this tag; shared packages were checked above.
+    go test -tags=console .
     if ($LASTEXITCODE -ne 0) { throw 'Console tests failed' }
-    go vet -tags=console ./...
+    go vet -tags=console .
     if ($LASTEXITCODE -ne 0) { throw 'Console go vet failed' }
     Write-Host 'Workflow lint, tests, and go vet passed for both builds'
 } finally {

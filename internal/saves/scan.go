@@ -18,13 +18,21 @@ import (
 
 var ErrSettling = errors.New("waiting for saves to settle")
 
-const (
-	directoryBatchSize  = 128
-	maxDirectoryEntries = 4096
-	maxSaveFiles        = 1024
-	maxFileBytes        = 8 << 20
-	maxSnapshotBytes    = 32 << 20
-)
+const directoryBatchSize = 128
+
+// Limits bounds filesystem enumeration, reads, snapshots, and retained payloads.
+// Pass a policy to NewScanner; it is copied and remains fixed for that scanner.
+type Limits struct {
+	DirectoryEntries int
+	SaveFiles        int
+	FileBytes        int64
+	SnapshotBytes    int64
+}
+
+// DefaultLimits returns the production safety policy by value.
+func DefaultLimits() Limits {
+	return Limits{DirectoryEntries: 4096, SaveFiles: 1024, FileBytes: 8 << 20, SnapshotBytes: 32 << 20}
+}
 
 // Scanner reads direct children and caches the last settled version of each
 // eligible file. Essential versions take priority in the bounded payload cache.
@@ -32,6 +40,7 @@ const (
 type Scanner struct {
 	Folder      string
 	Quiet       time.Duration
+	limits      Limits
 	settlements map[string]fileSettlement
 }
 
@@ -54,28 +63,37 @@ type Snapshot struct {
 }
 
 // scanResult builds a new bounded cache without modifying previous snapshots.
-// During construction the old and new caches can coexist; each is at most 32 MiB.
+// During construction the old and new caches can coexist; each obeys the policy.
 type scanResult struct {
+	limits   Limits
 	states   map[string]fileSettlement
 	files    map[string]File
 	bytes    int64
 	warnings []string
 }
 
+// NewScanner copies its policy. Scan rejects invalid limits before filesystem I/O.
+func NewScanner(folder string, quiet time.Duration, limits Limits) *Scanner {
+	return &Scanner{Folder: folder, Quiet: quiet, limits: limits}
+}
+
 // Scan selects settled versions, never unsettled candidate bytes. Every current
 // essential file needs a settled version; supplementary versions use the remaining
 // budget. Cancellation cannot interrupt an already-blocked filesystem operation.
 func (s *Scanner) Scan(ctx context.Context, now time.Time) (Snapshot, error) {
-	entries, err := inventory(ctx, s.Folder)
+	if err := s.limits.validate(); err != nil {
+		return Snapshot{}, err
+	}
+	entries, err := inventory(ctx, s.Folder, s.limits.DirectoryEntries)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	core, extra := splitFiles(entries)
 	s.pruneSettlements(entries)
-	if err := validateEssential(core); err != nil {
+	if err := validateEssential(core, s.limits.SaveFiles); err != nil {
 		return Snapshot{}, err
 	}
-	result := scanResult{states: make(map[string]fileSettlement, len(entries)), files: make(map[string]File)}
+	result := scanResult{limits: s.limits, states: make(map[string]fileSettlement, len(entries)), files: make(map[string]File)}
 	coreErr := s.readEssential(ctx, core, now, &result)
 	if errors.Is(coreErr, context.Canceled) || errors.Is(coreErr, context.DeadlineExceeded) {
 		return Snapshot{}, coreErr
@@ -139,7 +157,7 @@ func (s *Scanner) readEssential(ctx context.Context, core []metadata, now time.T
 }
 
 func (s *Scanner) readSupplementary(ctx context.Context, extra []metadata, now time.Time, result *scanResult) error {
-	readBudget := int64(maxSnapshotBytes) - result.bytes
+	readBudget := s.limits.SnapshotBytes - result.bytes
 	for _, m := range extra {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -147,12 +165,12 @@ func (s *Scanner) readSupplementary(ctx context.Context, extra []metadata, now t
 		previous := s.settlements[m.Name]
 		state := previous
 		var candidateErr error
-		if m.err == nil && m.Size <= maxFileBytes && m.Size > readBudget {
+		if m.err == nil && m.Size <= s.limits.FileBytes && m.Size > readBudget {
 			state.observed = false
 			candidateErr = errors.New("supplementary read budget exhausted")
 		} else {
 			state, candidateErr = s.observe(ctx, m, previous, now)
-			if m.err == nil && m.Size <= maxFileBytes {
+			if m.err == nil && m.Size <= s.limits.FileBytes {
 				readBudget -= m.Size
 			}
 		}
@@ -169,11 +187,11 @@ func (s *Scanner) readSupplementary(ctx context.Context, extra []metadata, now t
 func (result *scanResult) admitEssential(name string, previous, candidate fileSettlement, candidateErr error) error {
 	var overflow error
 	projected := result.bytes - settledSize(previous.settled) + settledSize(candidate.settled)
-	if projected > maxSnapshotBytes {
+	if projected > result.limits.SnapshotBytes {
 		// Keep cache memory bounded, but do not silently publish an older core
 		// after a newer settled essential set has exceeded the snapshot limit.
 		candidate.settled = previous.settled
-		overflow = errors.New("settled essential snapshot exceeds 32 MiB safety limit")
+		overflow = fmt.Errorf("settled essential snapshot exceeds %s safety limit", byteLimit(result.limits.SnapshotBytes))
 	} else {
 		result.bytes = projected
 	}
@@ -211,7 +229,7 @@ func (result *scanResult) admitSupplementary(name string, previous, candidate fi
 }
 
 func (result *scanResult) fits(file *File) bool {
-	return len(result.files) < maxSaveFiles && result.bytes+settledSize(file) <= maxSnapshotBytes
+	return len(result.files) < result.limits.SaveFiles && result.bytes+settledSize(file) <= result.limits.SnapshotBytes
 }
 
 func splitFiles(entries []metadata) (core, extra []metadata) {
@@ -227,7 +245,7 @@ func splitFiles(entries []metadata) (core, extra []metadata) {
 
 // Required names/counts are known before reading. Byte budgets apply to settled
 // versions, not to newer on-disk candidates which may never enter a snapshot.
-func validateEssential(files []metadata) error {
+func validateEssential(files []metadata, maxFiles int) error {
 	hero, account := false, false
 	for _, m := range files {
 		upper := strings.ToUpper(m.Name)
@@ -237,8 +255,8 @@ func validateEssential(files []metadata) error {
 	if !hero || !account {
 		return errors.New("waiting for HERO_ and ACCOUNT_ .pld files")
 	}
-	if len(files) > maxSaveFiles {
-		return fmt.Errorf("essential save set exceeds %d eligible files safety limit", maxSaveFiles)
+	if len(files) > maxFiles {
+		return fmt.Errorf("essential save set exceeds %d eligible files safety limit", maxFiles)
 	}
 	return nil
 }
@@ -249,11 +267,11 @@ func (s *Scanner) observe(ctx context.Context, m metadata, previous fileSettleme
 		next.observed = false
 		return next, m.err
 	}
-	if m.Size > maxFileBytes {
+	if m.Size > s.limits.FileBytes {
 		next.observed = false
-		return next, errors.New("candidate exceeds 8 MiB safety limit")
+		return next, fmt.Errorf("candidate exceeds %s safety limit", byteLimit(s.limits.FileBytes))
 	}
-	text, err := readFile(ctx, filepath.Join(s.Folder, m.Name), m)
+	text, err := readFile(ctx, filepath.Join(s.Folder, m.Name), m, s.limits.FileBytes)
 	if err != nil {
 		next.observed = false
 		return next, err
@@ -295,7 +313,7 @@ type metadata struct {
 	err      error
 }
 
-func inventory(ctx context.Context, folder string) ([]metadata, error) {
+func inventory(ctx context.Context, folder string, maxEntries int) ([]metadata, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -315,8 +333,8 @@ func inventory(ctx context.Context, folder string) ([]metadata, error) {
 			return nil, fmt.Errorf("read save folder: %w", err)
 		}
 		count += len(entries)
-		if count > maxDirectoryEntries {
-			return nil, fmt.Errorf("save folder exceeds %d directory entries safety limit", maxDirectoryEntries)
+		if count > maxEntries {
+			return nil, fmt.Errorf("save folder exceeds %d directory entries safety limit", maxEntries)
 		}
 		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
@@ -357,7 +375,7 @@ func essential(name string) bool {
 		strings.HasPrefix(upper, "LEGACY_")
 }
 
-func readFile(ctx context.Context, path string, expected metadata) (string, error) {
+func readFile(ctx context.Context, path string, expected metadata, maxBytes int64) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -380,14 +398,14 @@ func readFile(ctx context.Context, path string, expected metadata) (string, erro
 	if !os.SameFile(info, opened) || opened.Size() != expected.Size || !opened.ModTime().Equal(expected.Modified) {
 		return "", ErrSettling
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return "", err
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if int64(len(data)) != expected.Size {
+	if int64(len(data)) > maxBytes || int64(len(data)) != expected.Size {
 		return "", ErrSettling
 	}
 	after, err := os.Lstat(path)
@@ -401,6 +419,23 @@ func readFile(ctx context.Context, path string, expected metadata) (string, erro
 		return "", errors.New("save is not valid UTF-8")
 	}
 	return string(data), nil
+}
+
+func (limits Limits) validate() error {
+	if limits.DirectoryEntries < 1 || limits.SaveFiles < 1 || limits.FileBytes < 1 || limits.SnapshotBytes < 1 || limits.FileBytes == 1<<63-1 {
+		return errors.New("scanner limits must be positive and file bytes must allow a bounded extra-byte read")
+	}
+	return nil
+}
+
+func byteLimit(size int64) string {
+	if size%(1<<20) == 0 {
+		return fmt.Sprintf("%d MiB", size>>20)
+	}
+	if size%(1<<10) == 0 {
+		return fmt.Sprintf("%d KiB", size>>10)
+	}
+	return fmt.Sprintf("%d bytes", size)
 }
 
 func fingerprint(ctx context.Context, files map[string]File) (string, error) {

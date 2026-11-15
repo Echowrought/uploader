@@ -67,7 +67,7 @@ func (p *folderPoller) requestEmission() {
 func newFolderPoller(saveFolder, baseline string, logger *log.Logger) *folderPoller {
 	return &folderPoller{
 		saveFolder:             saveFolder,
-		scanner:                &saves.Scanner{Folder: saveFolder, Quiet: 5 * time.Second},
+		scanner:                saves.NewScanner(saveFolder, 5*time.Second, saves.DefaultLimits()),
 		logger:                 logger,
 		lastEmittedFingerprint: baseline,
 	}

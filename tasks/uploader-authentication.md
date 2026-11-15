@@ -32,6 +32,65 @@ Browser pairing could be added later without changing the underlying token/owner
 
 No final pairing implementation has been selected; prioritize the simple token flow first.
 
+### Proposed authentication flow
+
+GitHub renders the Mermaid sequence diagram below directly in this Markdown file. It shows the initial manual-token approach, not the optional future browser-pairing flow. The site's existing OAuth implementation handles the login details; the exchange is simplified here. HTTP status codes are illustrative, not a finalized API contract.
+
+```mermaid
+sequenceDiagram
+    actor Player
+    participant Browser
+    participant Site as Website / upload API
+    participant Blizzard as Blizzard OAuth
+    participant App as Uploader
+    participant File as Local token file
+
+    Note over Player,Blizzard: One-time setup, explicitly started by the player
+    Player->>Browser: Sign in on the website
+    Browser->>Site: Start Battle.net login
+    Site-->>Browser: Redirect to Blizzard authorization
+    Browser->>Blizzard: Authenticate and authorize
+    Blizzard-->>Browser: Redirect back with authorization code
+    Browser->>Site: OAuth callback
+    Site->>Blizzard: Exchange code and retrieve account identity
+    Blizzard-->>Site: Authenticated identity
+    Site-->>Browser: Signed-in website session
+
+    Player->>Browser: Request an uploader token
+    Browser->>Site: Create upload-only token for signed-in account
+    Site->>Site: Generate random token; store hash and account binding
+    Site-->>Browser: Show token for copying
+    Player->>App: Paste token into local configuration
+    App->>File: Save token with restricted local access
+
+    Note over App,File: Later startups require no login or unlock prompt
+    App->>File: Read token
+    File-->>App: Token or missing
+    alt Token missing
+        App-->>Player: Authentication required; reconnect explicitly
+        Note over App,Site: Do not silently submit protected uploads anonymously
+    else Token available
+        App->>Site: HTTPS upload with token and save files
+        Site->>Site: Validate token, revocation, and upload scope
+        alt Token invalid or revoked
+            Site-->>App: Authentication rejected (for example, 401)
+            App-->>Player: Authentication required; reconnect explicitly
+        else Token valid
+            Site->>Site: Derive destination account from token
+            Site->>Site: Check claimed save ownership against account
+            alt Incompatible owner
+                Site-->>App: Upload rejected (for example, 403)
+                App-->>Player: Save ownership mismatch
+            else Authorized owner
+                Site->>Site: Store revision under token-bound account; preserve history
+                Site-->>App: Upload accepted
+            end
+        end
+    end
+```
+
+Anonymous submissions, if supported, follow a separate isolated/unverified path. This diagram never grants them access to protected backup history. Credentials are sent only to the authorized upload origin, not automatically forwarded to a remotely configured replacement.
+
 ### Unattended startup requirement
 
 Normal startup and automatic uploads must not trigger credential-unlock prompts or login dialogs. Initial setup and reconnection may require interaction, but must be explicitly initiated by the user.

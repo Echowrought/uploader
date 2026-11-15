@@ -80,7 +80,7 @@ Fingerprints cover the settled versions actually selected, not current candidate
 
 ## Build and test
 
-Requires Windows, Go 1.24 or newer, and Windows PowerShell for the built-in folder picker. Prefer a current supported Go toolchain. No C compiler is required for a normal Windows build.
+Requires Windows, Go 1.25 or newer, and Windows PowerShell for the built-in folder picker. Prefer a current supported Go toolchain. No C compiler is required for a normal Windows build.
 
 Run checks without building release packages or changing `dist`:
 
@@ -88,7 +88,7 @@ Run checks without building release packages or changing `dist`:
 .\scripts\check.ps1
 ```
 
-This runs pinned `actionlint` against the GitHub workflows, plus tests and `go vet` for both tray and console builds. The first run downloads the lint tool through Go; it does not add it to the application's dependencies. The script works regardless of your current directory when invoked by its path.
+This runs pinned `actionlint` against the GitHub workflows, plus tests and `go vet` for shared code and both entry-point builds. Shared packages run once; the console tag is checked separately on the main package. The first run downloads the lint tool through Go; it does not add it to the application's dependencies. The script works regardless of your current directory when invoked by its path.
 
 To check and build:
 
@@ -124,7 +124,7 @@ Dry run prints the eligible file count and exits after reading a valid stable sn
 
 **Running the console executable without `--dry-run` starts real automatic uploading according to configuration.** It does not require `--console`; that option has been removed. Quit any running tray instance before starting the console executable.
 
-Automated tests use temporary save fixtures and local HTTP servers, not the real leaderboard. A live upload still needs compatibility verification with explicitly approved saves.
+Automated tests use temporary save fixtures and local HTTP servers, not the real leaderboard. Timer-heavy app tests use Go's `testing/synctest` virtual clock: production settling periods, retries, and deadline checks are preserved without waiting real seconds. Filesystem limits and subprocess tests still exercise real OS operations. Scanner boundary tests pass a smaller per-instance policy (16 entries, 8 saves, 64-byte files, 256-byte snapshots) through the same code as production. Separate checks preserve the production defaults, multi-batch enumeration, and a full-size 8 MiB file boundary. A live upload still needs compatibility verification with explicitly approved saves.
 
 ## Distribution
 

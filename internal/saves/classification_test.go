@@ -50,7 +50,7 @@ func TestScannerKnownCategoryWithoutSettledVersionBlocksSnapshot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			folder := fixtureFolder(t)
-			scanner := Scanner{Folder: folder, Quiet: 5 * time.Second}
+			scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 			now := time.Now()
 
 			_, _ = scanner.Scan(context.Background(), now)
@@ -82,7 +82,7 @@ func TestScannerInvalidKnownCategoryWithoutCacheBlocksSnapshot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			folder := fixtureFolder(t)
 			writeFixture(t, filepath.Join(folder, name), "\xff")
-			scanner := Scanner{Folder: folder}
+			scanner := NewScanner(folder, 0, DefaultLimits())
 
 			snapshot, err := scanner.Scan(context.Background(), time.Now())
 
@@ -107,7 +107,7 @@ func TestScannerInvalidKnownCategoryRetainsSettledVersion(t *testing.T) {
 			folder := fixtureFolder(t)
 			path := filepath.Join(folder, name)
 			writeFixture(t, path, "settled essential data")
-			scanner := Scanner{Folder: folder}
+			scanner := NewScanner(folder, 0, DefaultLimits())
 			now := time.Now()
 
 			_, _ = scanner.Scan(context.Background(), now)

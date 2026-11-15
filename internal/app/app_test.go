@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwg2uploader/internal/leaderboard"
@@ -20,151 +21,163 @@ import (
 
 func TestAppPersistsSuccessfulSnapshot(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	snapshot := readSnapshot(t, application.Config.SaveFolder)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		snapshot := readSnapshot(t, application.Config.SaveFolder)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{result: successfulResult()}
-	status := awaitStatus(t, ctx, application, "successfully")
-	cancel()
-	<-done
-	state, err := storage.LoadUploadState(application.Dir)
+		done := startApp(ctx, application)
+		request := nextRequest(t, ctx, client)
+		request.reply <- uploadReply{result: successfulResult()}
+		status := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
+		state, err := storage.LoadUploadState(application.Dir)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Fingerprint != snapshot.Fingerprint || state.Heroes != 1 || state.Player != "Player" {
-		t.Fatalf("incorrect persisted state: %+v", state)
-	}
-	if status.LastUpload.IsZero() {
-		t.Fatal("successful upload time not exposed")
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Fingerprint != snapshot.Fingerprint || state.Heroes != 1 || state.Player != "Player" {
+			t.Fatalf("incorrect persisted state: %+v", state)
+		}
+		if status.LastUpload.IsZero() {
+			t.Fatal("successful upload time not exposed")
+		}
+	})
 }
 
 func TestAppSkipsSnapshotAlreadyUploadedBeforeRestart(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	scanner := saves.Scanner{Folder: application.Config.SaveFolder}
-	_, _ = scanner.Scan(context.Background(), time.Now())
-	snapshot, err := scanner.Scan(context.Background(), time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	application.LastUpload = storage.UploadState{SaveFolder: application.Config.SaveFolder, Destination: leaderboard.BaseURL, Fingerprint: snapshot.Fingerprint}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		scanner := saves.NewScanner(application.Config.SaveFolder, 0, saves.DefaultLimits())
+		_, _ = scanner.Scan(context.Background(), time.Now())
+		snapshot, err := scanner.Scan(context.Background(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		application.LastUpload = storage.UploadState{SaveFolder: application.Config.SaveFolder, Destination: leaderboard.BaseURL, Fingerprint: snapshot.Fingerprint}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	status := awaitStatus(t, ctx, application, "No new changes")
-	cancel()
-	<-done
+		done := startApp(ctx, application)
+		status := awaitStatus(t, ctx, application, "No new changes")
+		cancel()
+		<-done
 
-	if !strings.Contains(status.Message, "No new changes") {
-		t.Fatal(status.Message)
-	}
-	if len(client.requests) != 0 {
-		t.Fatal("unchanged snapshot uploaded again")
-	}
+		if !strings.Contains(status.Message, "No new changes") {
+			t.Fatal(status.Message)
+		}
+		if len(client.requests) != 0 {
+			t.Fatal("unchanged snapshot uploaded again")
+		}
+	})
 }
 
 func TestAppExplicitUploadRetriesWithAutomaticUploadsOff(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	snapshot := readSnapshot(t, application.Config.SaveFolder)
-	application.Config.Automatic = false
-	application.LastUpload = storage.UploadState{SaveFolder: application.Config.SaveFolder, Destination: leaderboard.BaseURL, Fingerprint: snapshot.Fingerprint}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		snapshot := readSnapshot(t, application.Config.SaveFolder)
+		application.Config.Automatic = false
+		application.LastUpload = storage.UploadState{SaveFolder: application.Config.SaveFolder, Destination: leaderboard.BaseURL, Fingerprint: snapshot.Fingerprint}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	_ = awaitStatus(t, ctx, application, "Automatic uploads off")
-	application.Commands <- Command{Kind: "upload"}
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = awaitStatus(t, ctx, application, "successfully")
-	cancel()
-	<-done
+		done := startApp(ctx, application)
+		_ = awaitStatus(t, ctx, application, "Automatic uploads off")
+		application.Commands <- Command{Kind: "upload"}
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
 
-	if application.Config.Automatic {
-		t.Fatal("one-off upload enabled automatic uploads")
-	}
-	if application.LastUpload.UploadedAt.IsZero() || application.LastUpload.Fingerprint != snapshot.Fingerprint {
-		t.Fatal("forced emission or its retry did not complete")
-	}
-	if !reflect.DeepEqual(first.payload, second.payload) {
-		t.Fatal("retry changed the forced snapshot")
-	}
+		if application.Config.Automatic {
+			t.Fatal("one-off upload enabled automatic uploads")
+		}
+		if application.LastUpload.UploadedAt.IsZero() || application.LastUpload.Fingerprint != snapshot.Fingerprint {
+			t.Fatal("forced emission or its retry did not complete")
+		}
+		if !reflect.DeepEqual(first.payload, second.payload) {
+			t.Fatal("retry changed the forced snapshot")
+		}
+	})
 }
 
 func TestAppDoesNotPersistRejectedSnapshot(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{err: &leaderboard.UploadError{Message: "HTTP 400"}}
-	_ = awaitStatus(t, ctx, application, "HTTP 400")
-	cancel()
-	<-done
-	state, err := storage.LoadUploadState(application.Dir)
+		done := startApp(ctx, application)
+		request := nextRequest(t, ctx, client)
+		request.reply <- uploadReply{err: &leaderboard.UploadError{Message: "HTTP 400"}}
+		_ = awaitStatus(t, ctx, application, "HTTP 400")
+		cancel()
+		<-done
+		state, err := storage.LoadUploadState(application.Dir)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Fingerprint != "" {
-		t.Fatal("rejected snapshot recorded as successful")
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Fingerprint != "" {
+			t.Fatal("rejected snapshot recorded as successful")
+		}
+	})
 }
 
 func TestAppLogsQuotedErrorResponseBody(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	var logs bytes.Buffer
-	application.Logger = log.New(&logs, "", 0)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		var logs bytes.Buffer
+		application.Logger = log.New(&logs, "", 0)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{err: &leaderboard.UploadError{Message: "HTTP 408", Body: "timeout\ntry again\x1b"}}
-	status := awaitStatus(t, ctx, application, "HTTP 408")
-	cancel()
-	<-done
+		done := startApp(ctx, application)
+		request := nextRequest(t, ctx, client)
+		request.reply <- uploadReply{err: &leaderboard.UploadError{Message: "HTTP 408", Body: "timeout\ntry again\x1b"}}
+		status := awaitStatus(t, ctx, application, "HTTP 408")
+		cancel()
+		<-done
 
-	if !strings.Contains(logs.String(), `Upload error response body: "timeout\ntry again\x1b"`) {
-		t.Fatalf("quoted response body missing from logs: %s", logs.String())
-	}
-	if strings.Contains(status.Message, "try again") {
-		t.Fatal("response body should be logged, not included in tray status")
-	}
+		if !strings.Contains(logs.String(), `Upload error response body: "timeout\ntry again\x1b"`) {
+			t.Fatalf("quoted response body missing from logs: %s", logs.String())
+		}
+		if strings.Contains(status.Message, "try again") {
+			t.Fatal("response body should be logged, not included in tray status")
+		}
+	})
 }
 
 func TestAppDryRunDoesNotUploadOrPersistState(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	application.DryRun = true
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		application.DryRun = true
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	_ = awaitStatus(t, ctx, application, "Dry run:")
-	cancel()
-	<-done
-	state, err := storage.LoadUploadState(application.Dir)
+		done := startApp(ctx, application)
+		_ = awaitStatus(t, ctx, application, "Dry run:")
+		cancel()
+		<-done
+		state, err := storage.LoadUploadState(application.Dir)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Fingerprint != "" || len(client.requests) != 0 {
-		t.Fatal("dry run uploaded or persisted successful state")
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Fingerprint != "" || len(client.requests) != 0 {
+			t.Fatal("dry run uploaded or persisted successful state")
+		}
+	})
 }
 
 func TestCoordinatorDryRunReceivesPreviewMetadata(t *testing.T) {
@@ -193,75 +206,81 @@ func TestCoordinatorDryRunReceivesPreviewMetadata(t *testing.T) {
 
 func TestAppCancelsInFlightUploadOnShutdown(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	_ = nextRequest(t, ctx, client)
-	cancel()
-	<-done
-	state, err := storage.LoadUploadState(application.Dir)
+		done := startApp(ctx, application)
+		_ = nextRequest(t, ctx, client)
+		cancel()
+		<-done
+		state, err := storage.LoadUploadState(application.Dir)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Fingerprint != "" {
-		t.Fatal("cancelled upload persisted as successful")
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Fingerprint != "" {
+			t.Fatal("cancelled upload persisted as successful")
+		}
+	})
 }
 
 func TestAppRetriesTransientFailure(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	snapshot := readSnapshot(t, application.Config.SaveFolder)
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		snapshot := readSnapshot(t, application.Config.SaveFolder)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = awaitStatus(t, ctx, application, "successfully")
-	cancel()
-	<-done
-	state, err := storage.LoadUploadState(application.Dir)
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true}}
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
+		state, err := storage.LoadUploadState(application.Dir)
 
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Fingerprint != snapshot.Fingerprint {
-		t.Fatal("retry success was not persisted")
-	}
-	if !reflect.DeepEqual(first.payload, second.payload) {
-		t.Fatal("retry unexpectedly changed the snapshot")
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Fingerprint != snapshot.Fingerprint {
+			t.Fatal("retry success was not persisted")
+		}
+		if !reflect.DeepEqual(first.payload, second.payload) {
+			t.Fatal("retry unexpectedly changed the snapshot")
+		}
+	})
 }
 
 func TestAppDetectsChangesMadeDuringUpload(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
 
-	done := startApp(ctx, application)
-	first := nextRequest(t, ctx, client)
-	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("new save contents"), 0600)
-	first.reply <- uploadReply{result: successfulResult()}
-	_ = awaitStatus(t, ctx, application, "successfully")
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = awaitStatus(t, ctx, application, "successfully")
-	cancel()
-	<-done
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("new save contents"), 0600)
+		first.reply <- uploadReply{result: successfulResult()}
+		_ = awaitStatus(t, ctx, application, "successfully")
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
 
-	if writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	if first.payload.Files["HERO_01_123.pld"].Text != "save" || second.payload.Files["HERO_01_123.pld"].Text != "new save contents" {
-		t.Fatal("changed save was not included in the next upload request")
-	}
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if first.payload.Files["HERO_01_123.pld"].Text != "save" || second.payload.Files["HERO_01_123.pld"].Text != "new save contents" {
+			t.Fatal("changed save was not included in the next upload request")
+		}
+	})
 }
 
 func TestPollingFailureIsLoggedWhileUploadIsActive(t *testing.T) {
@@ -323,72 +342,76 @@ func TestCoordinatorReportsUploadStatePersistenceFailure(t *testing.T) {
 
 func TestFailedFolderConfigWritePreservesPendingDelivery(t *testing.T) {
 	t.Parallel()
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	original := application.Config.SaveFolder
-	replacement := t.TempDir()
-	path := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		state := fixtureCoordinator(t, application)
+		original := application.Config.SaveFolder
+		replacement := t.TempDir()
+		path := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true}}
-	retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	application.Dir = path
-	commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+		queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("pending", "save"))
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true}}
+		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
+		application.Dir = path
+		commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
+		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
 
-	if queueErr != nil {
-		t.Fatal(queueErr)
-	}
-	if commandErr == nil || application.Config.SaveFolder != original || state.poller.saveFolder != original {
-		t.Fatal("failed config write changed the folder")
-	}
-	if application.LastUpload.Fingerprint != "pending" || second.startedAt.Before(retry.retryAt) {
-		t.Fatal("failed config write discarded pending data or backoff")
-	}
+		if queueErr != nil {
+			t.Fatal(queueErr)
+		}
+		if commandErr == nil || application.Config.SaveFolder != original || state.poller.saveFolder != original {
+			t.Fatal("failed config write changed the folder")
+		}
+		if application.LastUpload.Fingerprint != "pending" || second.startedAt.Before(retry.retryAt) {
+			t.Fatal("failed config write discarded pending data or backoff")
+		}
+	})
 }
 
 func TestAppShutdownPersistsSuccessfulDelivery(t *testing.T) {
 	t.Parallel()
-	application, _ := fixtureApp(t)
-	started, release, returning := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	application.Client = uploadFunc(func(ctx context.Context, _ leaderboard.UploadRequest) (leaderboard.Result, error) {
-		close(started)
-		select {
-		case <-release:
-			close(returning)
-			return successfulResult(), nil
-		case <-ctx.Done():
-			return leaderboard.Result{}, ctx.Err()
+	synctest.Test(t, func(t *testing.T) {
+		application, _ := fixtureApp(t)
+		started, release, returning := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		application.Client = uploadFunc(func(ctx context.Context, _ leaderboard.UploadRequest) (leaderboard.Result, error) {
+			close(started)
+			select {
+			case <-release:
+				close(returning)
+				return successfulResult(), nil
+			case <-ctx.Done():
+				return leaderboard.Result{}, ctx.Err()
+			}
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		done := startApp(ctx, application)
+		t.Cleanup(func() { cancel(); <-done })
+		awaitSignal(t, ctx, started)
+		close(release)
+		awaitSignal(t, ctx, returning)
+		cancel()
+		<-done
+		persisted, err := storage.LoadUploadState(application.Dir)
+
+		if err != nil {
+			t.Fatal(err)
+		}
+		if persisted.Fingerprint == "" || persisted.Heroes != 1 {
+			t.Fatal("shutdown dropped successful delivery before persistence")
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	done := startApp(ctx, application)
-	t.Cleanup(func() { cancel(); <-done })
-	awaitSignal(t, ctx, started)
-	close(release)
-	awaitSignal(t, ctx, returning)
-	cancel()
-	<-done
-	persisted, err := storage.LoadUploadState(application.Dir)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.Fingerprint == "" || persisted.Heroes != 1 {
-		t.Fatal("shutdown dropped successful delivery before persistence")
-	}
 }
 
 func TestToUploadRequestConvertsSnapshotFiles(t *testing.T) {
@@ -465,7 +488,7 @@ func fixtureApp(t *testing.T) (*App, *fakeUploader) {
 
 func readSnapshot(t *testing.T, folder string) saves.Snapshot {
 	t.Helper()
-	scanner := saves.Scanner{Folder: folder}
+	scanner := saves.NewScanner(folder, 0, saves.DefaultLimits())
 	_, _ = scanner.Scan(context.Background(), time.Now())
 	snapshot, err := scanner.Scan(context.Background(), time.Now())
 	if err != nil {
