@@ -2,6 +2,8 @@
 
 Status: proposed discussion; not implemented.
 
+Tracking issue: [#3](https://github.com/cwg-rpg-community/uploader/issues/3).
+
 ## Goal
 
 Allow the upload endpoint and essential-file rules to change without requiring users to install another binary. Explore a small manifest hosted in the GitHub repository, with bundled defaults as a fallback.

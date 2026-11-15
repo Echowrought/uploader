@@ -2,6 +2,8 @@
 
 Status: proposed task; not implemented.
 
+Tracking issue: [#1](https://github.com/cwg-rpg-community/uploader/issues/1).
+
 ## Goal
 
 Support Windows and Linux while sharing the existing save scanner, poller, uploader, coordinator, and status renderer. Keep console mode available on both platforms as a fallback when tray integration is unavailable.

@@ -2,6 +2,8 @@
 
 Status: discussion in progress; no API or app changes agreed.
 
+Tracking issue: [#2](https://github.com/cwg-rpg-community/uploader/issues/2).
+
 ## Question
 
 Would accepting save files one by one, instead of requiring a complete snapshot, simplify the app and API overall?

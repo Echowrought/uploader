@@ -88,7 +88,7 @@ Run checks without building release packages or changing `dist`:
 .\scripts\check.ps1
 ```
 
-This runs pinned `actionlint` against the GitHub workflows, plus tests and `go vet` for shared code and both entry-point builds. Shared packages run once; the console tag is checked separately on the main package. The first run downloads the lint tool through Go; it does not add it to the application's dependencies. The script works regardless of your current directory when invoked by its path.
+This runs pinned `actionlint` against the GitHub workflows, plus tests and `go vet` for shared code and both entry-point builds. Shared packages run once; the console tag is checked separately on the main package. Tests run uncached, and every package must report under 10 seconds of test execution. This uses Go's JSON-reported package time, not compilation/download time or summed parallel-test durations. A budget failure lists the slowest top-level tests. The first run downloads the lint tool through Go; it does not add it to the application's dependencies. The script works regardless of your current directory when invoked by its path.
 
 To check and build:
 

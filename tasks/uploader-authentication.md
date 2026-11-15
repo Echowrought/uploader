@@ -2,6 +2,8 @@
 
 Status: discussion in progress; not implemented.
 
+Tracking issue: [#4](https://github.com/cwg-rpg-community/uploader/issues/4).
+
 ## Goal
 
 Authenticate save submissions using the site's existing Blizzard OAuth identity, without adding unnecessary login or credential-storage complexity to the uploader.
@@ -129,7 +131,7 @@ Browsers were discussed as a comparison: they commonly use OS-backed protection 
 
 ## Interaction with Remote Upload Configuration
 
-See [Remote Upload Configuration](remote-upload-policy.md).
+See [Remote Upload Configuration (#3)](https://github.com/cwg-rpg-community/uploader/issues/3).
 
 Never automatically forward an existing credential to a newly configured upload origin. Destination approval and credential authorization are separate decisions; a remotely supplied URL is not authority to receive an account token. Redirect handling must preserve this boundary too.
 
