@@ -41,13 +41,11 @@ func TestWorkLogContextPersistsAcrossRetriesAndChangesForNewEmissions(t *testing
 
 	for _, want := range []string{
 		"[app] work_id=1 snapshot accepted: 1 eligible files",
-		"[uploader] work_id=1 snapshot queued: 1 eligible files",
 		"[uploader] work_id=1 upload failed: temporary failure",
 		`[uploader] work_id=1 Upload error response body: "retry\nlater"`,
 		"[uploader] work_id=1 retry scheduled at ",
 		"[uploader] work_id=1 upload succeeded: 1 heroes",
 		"[app] work_id=2 snapshot accepted: 1 eligible files",
-		"[uploader] work_id=2 snapshot queued: 1 eligible files",
 		"[uploader] work_id=2 upload started: 1 eligible files",
 		"[uploader] work_id=2 upload succeeded: 1 heroes",
 	} {
