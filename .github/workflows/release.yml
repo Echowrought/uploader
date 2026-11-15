@@ -1,0 +1,49 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+on:
+  push:
+    branches: [ "master" ]
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-go@v7
+      with:
+        go-version: '1.27.3'
+    - name: Build and test
+      run: ./build.ps1
+    - name: Package
+      run: |
+        $tag = $env:GITHUB_REF_NAME
+        $docs = @(
+          "./dist/README.md"
+          "./dist/LICENSE"
+          "./dist/THIRD_PARTY_NOTICES.md"
+        )
+
+        Compress-Archive `
+          -Path (@("./dist/cwg2-uploader.exe") + $docs) `
+          -DestinationPath "cwg2-uploader-$tag-windows-amd64.zip"
+
+        Compress-Archive `
+          -Path (@("./dist/cwg2-uploader-console.exe") + $docs) `
+          -DestinationPath "cwg2-uploader-console-$tag-windows-amd64.zip"
+    - name: Create draft release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        $tag = $env:GITHUB_REF_NAME
+        $tray = "cwg2-uploader-$tag-windows-amd64.zip"
+        $console = "cwg2-uploader-console-$tag-windows-amd64.zip"
+        gh release create "$tag" "$tray" "$console"`
+          --verify-tag `
+          --draft `
+          --title "$tag" `
+          --generate-notes
+        if ($LASTEXITCODE -ne 0) { throw "Release creation failed" }
