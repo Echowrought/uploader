@@ -37,6 +37,11 @@ jobs:
         }
         if (git status --porcelain) { throw 'Release builds require a clean checkout' }
         ./build.ps1
+    - name: Build installer
+      run: |
+        $compiler = & ./scripts/install-inno.ps1 -Destination "$env:RUNNER_TEMP\inno-setup"
+        & ./scripts/build-installer.ps1 -Version $env:GITHUB_REF_NAME -ISCCPath $compiler
+        "INNO_COMPILER=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Record build information
       run: |
         $goEnvironment = go env -json GOVERSION GOOS GOARCH GOAMD64 CGO_ENABLED GOTOOLCHAIN GOFLAGS GOEXPERIMENT
@@ -62,6 +67,10 @@ jobs:
           runner_image_version = $env:ImageVersion
           powershell_version = $PSVersionTable.PSVersion.ToString()
           go = ($goEnvironment | ConvertFrom-Json)
+          inno_setup = [ordered]@{
+            version = (Get-Item $env:INNO_COMPILER).VersionInfo.ProductVersion
+            compiler_sha256 = (Get-FileHash $env:INNO_COMPILER -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
           actions = $actions
           executables = $executables
         } | ConvertTo-Json -Depth 5 | Set-Content build-info.json -Encoding utf8
@@ -87,6 +96,7 @@ jobs:
       with:
         subject-path: |
           cwg2-uploader-*.zip
+          dist/cwg2-uploader-*-setup.exe
           build-info.json
     - name: Create draft release
       env:
@@ -95,22 +105,26 @@ jobs:
         $tag = $env:GITHUB_REF_NAME
         $tray = "cwg2-uploader-$tag-windows-amd64.zip"
         $console = "cwg2-uploader-console-$tag-windows-amd64.zip"
+        $installer = "cwg2-uploader-$tag-windows-amd64-setup.exe"
         $repository = $env:GITHUB_REPOSITORY
         $download = "$env:GITHUB_SERVER_URL/$repository/releases/download/$tag"
         $verification = "$env:GITHUB_SERVER_URL/$repository/blob/$tag/VERIFYING.md"
         @"
         ## Downloads
-        - [Windows tray app (recommended)]($download/$tray)
-        - [Windows console app (if you prefer console)]($download/$console)
+        - [Windows installer (tray app)]($download/$installer)
+        - [Portable Windows tray app]($download/$tray)
+        - [Portable Windows console app]($download/$console)
 
-        Extract the tray ZIP and launch cwg2-uploader.exe. Starting the app enables automatic save uploads by default; read the included README first. Executables are unsigned, so Windows SmartScreen may display a warning.
+        Quit the uploader before installing or upgrading. Setup installs for the current user without administrator rights and does not launch the app. Start it from the Start menu when ready. Configuration/history are retained on upgrades and uninstall.
+
+        For portable use, extract the ZIP and launch the executable. Starting either app enables automatic save uploads by default; read the included README first. Executables and setup are unsigned, so Windows SmartScreen may display a warning.
 
         ## Verify this release
         This section is for geeks. Or those who really want to check where their download came from.
 
         Follow the [verification instructions]($verification) to check this release's attestations, or rebuild [this tag]($env:GITHUB_SERVER_URL/$repository/tree/$tag) yourself and compare executable hashes. No team access is needed.
         "@ | Set-Content release-notes.md -Encoding utf8
-        gh release create "$tag" "$tray" "$console" build-info.json `
+        gh release create "$tag" "$tray" "$console" "./dist/$installer" build-info.json `
           --verify-tag `
           --draft `
           --prerelease `

@@ -11,7 +11,7 @@ Attestation alone doesn't independently prove compilation from source. Neither c
 
 ## 1. Verify the download
 
-Install a current [GitHub CLI](https://cli.github.com/). Download the ZIP you want and `build-info.json` from the same release. Open PowerShell in the folder containing them.
+Install a current [GitHub CLI](https://cli.github.com/). Download the ZIP you want and `build-info.json` from the same release. Open PowerShell in the folder containing them. For the installer instead of a ZIP, use the installer-verification commands below.
 
 If GitHub CLI asks you to sign in, run `gh auth login` with your own GitHub account. No organization membership or write access is needed.
 
@@ -35,6 +35,25 @@ if ($LASTEXITCODE -ne 0) { throw "ZIP verification failed" }
 Both commands must succeed. The second also checks that the ZIP's attestation names the same source commit as the verified build information. If verification fails, don't treat the files as verified or continue using their metadata as trusted instructions.
 
 Earlier releases, including v0.1.2, predate this workflow and may have neither attestations nor build information. These commands cannot retroactively verify them.
+
+### Verify the Windows installer
+
+Download the setup executable and `build-info.json` from the same release. This verifies the installer without running it:
+
+```powershell
+$tag = "v0.1.3" # Replace with the release tag.
+$repository = "cwg-rpg-community/uploader"
+$workflow = "$repository/.github/workflows/release.yml"
+$setup = "cwg2-uploader-$tag-windows-amd64-setup.exe"
+
+gh attestation verify ./build-info.json --repo "$repository" --signer-workflow "$workflow" --source-ref "refs/tags/$tag"
+if ($LASTEXITCODE -ne 0) { throw "Build information verification failed" }
+$build = Get-Content ./build-info.json -Raw | ConvertFrom-Json
+gh attestation verify "$setup" --repo "$repository" --signer-workflow "$workflow" --source-ref "refs/tags/$tag" --source-digest "$($build.source_commit)"
+if ($LASTEXITCODE -ne 0) { throw "Installer verification failed" }
+```
+
+For an independent Go payload rebuild, also obtain and verify the matching portable ZIP, then follow the steps below. Compare payload executables, not installer containers; installer output is not promised to be byte-reproducible. The compiler bootstrap is pinned in `scripts/install-inno.ps1`; the build information records the compiler version and hash.
 
 ## 2. Rebuild the executable
 
@@ -105,6 +124,6 @@ A match means your independent build produced the exact executable distributed i
 
 ## What the build information tells you
 
-The attested `build-info.json` records the source commit, workflow run, Go settings, runner image version, pinned action revisions, and executable hashes. It preserves those details beyond the lifetime of Actions logs. It does not let you request an old GitHub runner image or guarantee that every future environment can reproduce the build.
+The attested `build-info.json` records the source commit, workflow run, Go settings, runner image version, pinned action revisions, executable hashes (including setup when present), and the Inno Setup compiler version/hash. It preserves those details beyond the lifetime of Actions logs. It does not let you request an old GitHub runner image or guarantee that every future environment can reproduce the build.
 
 Attestations protect against substituting different files without the expected workflow identity. They don't protect against malicious source, compromised build tools, or someone authorized to change the trusted workflow. Rebuilding provides an additional source-to-binary check, not a code-security audit.
