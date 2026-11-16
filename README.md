@@ -105,6 +105,8 @@ This deletes the previous `dist` directory, runs `scripts\check.ps1`, then produ
 
 Both binaries retain Go symbol tables and DWARF debug information for debugging and inspection, at the cost of larger executables.
 
+Release builds embed their tag in both binaries using `build.ps1 -Version vX.Y.Z`; the release workflow supplies its tag automatically. Upload requests identify the build as `User-Agent: CWGRPGUploader/vX.Y.Z`. Plain `go build` and the default `build.ps1` build report `CWGRPGUploader/dev` instead.
+
 Both binaries share the same application code. Windows records the GUI/console subsystem in the executable: the GUI build avoids an unwanted console window, while the console build works naturally with terminal output, redirection, and shell waiting. Keeping them separate avoids console attachment/allocation code and GUI-process shell quirks. The console build uses the `console` Go build tag; the regular build does not.
 
 It also includes the README, verification instructions, and license notices. Failed builds remove partial `dist` output; keep anything you want to preserve elsewhere. `scripts\notices.ps1` is an internal helper called by `build.ps1`, not a standalone command.

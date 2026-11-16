@@ -36,7 +36,7 @@ jobs:
           throw 'Release tags must use vX.Y.Z: non-negative integers without leading zeros'
         }
         if (git status --porcelain) { throw 'Release builds require a clean checkout' }
-        ./build.ps1
+        ./build.ps1 -Version $env:GITHUB_REF_NAME
     - name: Build installer
       run: |
         $compiler = & ./scripts/install-inno.ps1 -Destination "$env:RUNNER_TEMP\inno-setup"

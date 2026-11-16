@@ -60,7 +60,7 @@ release artifacts but do not remove SmartScreen warnings. See
 Run from the repository root. Build the application first:
 
 ```powershell
-.\build.ps1
+.\build.ps1 -Version v1.2.3
 ```
 
 Use an existing Inno Setup compiler through `-ISCCPath`, `ISCC_PATH`, or PATH.
@@ -79,7 +79,9 @@ neither launches our uploader nor runs our generated installer.
 `build-installer.ps1` consumes the completed build and writes
 `dist\cwg-rpg-uploader-v1.2.3-windows-amd64-setup.exe`. It does not rebuild the app,
 clear `dist`, or run setup. The version must follow the repository's `vX.Y.Z`
-policy. Relative directory arguments are resolved from the repository root:
+policy. Use the same version for the application build and installer so the
+upload User-Agent and setup version agree. Relative directory arguments are
+resolved from the repository root:
 
 ```powershell
 .\scripts\build-installer.ps1 -Version v1.2.3 -ISCCPath $compiler `

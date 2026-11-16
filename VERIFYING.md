@@ -99,9 +99,9 @@ $env:GOEXPERIMENT = ""
 
 if ((go env GOVERSION) -ne $build.go.GOVERSION) { throw "Install the exact Go version recorded in build-info.json" }
 
-go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg-rpg-uploader.exe .
+go build -trimpath -ldflags="-H=windowsgui -X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader.exe .
 if ($LASTEXITCODE -ne 0) { throw "Tray build failed" }
-go build -tags=console -trimpath -o dist/cwg-rpg-uploader-console.exe .
+go build -tags=console -trimpath -ldflags="-X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader-console.exe .
 if ($LASTEXITCODE -ne 0) { throw "Console build failed" }
 ```
 

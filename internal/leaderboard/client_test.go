@@ -10,20 +10,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"cwgrpguploader/internal/buildinfo"
 )
 
 func TestClientUploadsRequest(t *testing.T) {
 	var captured UploadRequest
-	var method, path, contentType string
+	var method, path, contentType, userAgent string
 	var decodeErr error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method, path, contentType = r.Method, r.URL.Path, r.Header.Get("Content-Type")
+		userAgent = r.UserAgent()
 		decodeErr = json.NewDecoder(r.Body).Decode(&captured)
 		_, _ = w.Write([]byte(`{"player":"Player","heroes":1,"user_hash":"123","replaced":[],"kept_newer":[]}`))
 	}))
 	defer server.Close()
 	client := Client{HTTP: server.Client(), URL: server.URL}
 	request := UploadRequest{Files: map[string]UploadFile{"HERO_01_123.pld": {Text: "save", Mtime: 1700000000123}}}
+	wantUserAgent := "CWGRPGUploader/" + buildinfo.Version
 
 	result, err := client.Upload(context.Background(), request)
 
@@ -32,6 +36,9 @@ func TestClientUploadsRequest(t *testing.T) {
 	}
 	if method != "POST" || path != "/api/upload" || contentType != "application/json" {
 		t.Fatal("incorrect upload request")
+	}
+	if userAgent != wantUserAgent {
+		t.Fatalf("User-Agent = %q; want %q", userAgent, wantUserAgent)
 	}
 	if captured.Files["HERO_01_123.pld"] != request.Files["HERO_01_123.pld"] {
 		t.Fatal("payload changed")
