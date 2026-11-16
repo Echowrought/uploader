@@ -15,11 +15,11 @@ Install a current [GitHub CLI](https://cli.github.com/). Download the ZIP you wa
 
 If GitHub CLI asks you to sign in, run `gh auth login` with your own GitHub account. No organization membership or write access is needed.
 
-Set the tag to the release you're checking. Use `cwg2-uploader-console` instead of `cwg2-uploader` below if you downloaded the console version:
+Set the tag to the release you're checking. Use `cwg-rpg-uploader-console` instead of `cwg-rpg-uploader` below if you downloaded the console version:
 
 ```powershell
 $tag = "v0.1.3" # Replace with the release tag.
-$variant = "cwg2-uploader"
+$variant = "cwg-rpg-uploader"
 $repository = "cwg-rpg-community/uploader"
 $workflow = "$repository/.github/workflows/release.yml"
 $archive = "$variant-$tag-windows-amd64.zip"
@@ -44,7 +44,7 @@ Download the setup executable and `build-info.json` from the same release. This 
 $tag = "v0.1.3" # Replace with the release tag.
 $repository = "cwg-rpg-community/uploader"
 $workflow = "$repository/.github/workflows/release.yml"
-$setup = "cwg2-uploader-$tag-windows-amd64-setup.exe"
+$setup = "cwg-rpg-uploader-$tag-windows-amd64-setup.exe"
 
 gh attestation verify ./build-info.json --repo "$repository" --signer-workflow "$workflow" --source-ref "refs/tags/$tag"
 if ($LASTEXITCODE -ne 0) { throw "Build information verification failed" }
@@ -99,9 +99,9 @@ $env:GOEXPERIMENT = ""
 
 if ((go env GOVERSION) -ne $build.go.GOVERSION) { throw "Install the exact Go version recorded in build-info.json" }
 
-go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg2-uploader.exe .
+go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg-rpg-uploader.exe .
 if ($LASTEXITCODE -ne 0) { throw "Tray build failed" }
-go build -tags=console -trimpath -o dist/cwg2-uploader-console.exe .
+go build -tags=console -trimpath -o dist/cwg-rpg-uploader-console.exe .
 if ($LASTEXITCODE -ne 0) { throw "Console build failed" }
 ```
 

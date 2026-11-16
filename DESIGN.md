@@ -1,15 +1,15 @@
-# CWG2 Automatic Save Uploader
+# CWG RPG Uploader
 
 ## Status
 
-Draft design for a Go application that automatically submits Warcraft III CWG2 saves to the [CWG2 leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
+Draft design for a Go application that automatically submits Warcraft III CWG RPG saves to the [CWG RPG leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
 
 Confirmed decisions:
 
 - Windows system-tray application distributed to other players.
 - Default save location: `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`, resolved through the Windows Documents known folder to support redirection.
 - Automatically upload existing saves on startup, including first launch; no separate first-upload confirmation.
-- Human-editable `config.json`, successful-upload state, and automatically rotating logs under `%LOCALAPPDATA%\CWG2Uploader\`.
+- Human-editable `config.json`, successful-upload state, and automatically rotating logs under `%LOCALAPPDATA%\CWGRPGUploader\`.
 - Optional launch at Windows sign-in, controlled from the tray menu.
 
 The first implementation reads direct children only and includes all eligible account files, leaving multiple-account validation to the backend. Nested layouts and account selection are deferred rather than guessed. See [README.md](README.md) for operation and [DOCS.md](DOCS.md) for the implemented package layout.
@@ -186,7 +186,7 @@ Use Go's standard library for HTTP, JSON, hashing, logging, and polling. Select 
 
 ## Configuration and Local State
 
-Store per-user application data under `%LOCALAPPDATA%\CWG2Uploader\`, not alongside the executable or inside the game save folder. A distributed executable may be installed in an unwritable location such as Program Files. Portable mode can be considered later.
+Store per-user application data under `%LOCALAPPDATA%\CWGRPGUploader\`, not alongside the executable or inside the game save folder. A distributed executable may be installed in an unwritable location such as Program Files. Portable mode can be considered later.
 
 Use a human-editable `config.json`, for example:
 
@@ -203,7 +203,7 @@ The example path describes the usual location; initial discovery must honor the 
 
 Share configuration validation between loading and saving, including first-run defaults. Reject null configuration documents and null values for known settings; omitted settings retain their defaults. The expanded save folder must be absolute, and the polling interval must be between 1 and 3600 seconds. Preserve environment-variable references in stored settings. Runtime commands edit a config value copy and replace the live config only after validation and persistence succeed.
 
-Atomically persist successful-upload state in `%LOCALAPPDATA%\CWG2Uploader\state.json`, including:
+Atomically persist successful-upload state in `%LOCALAPPDATA%\CWGRPGUploader\state.json`, including:
 
 - The last successfully uploaded snapshot fingerprint, scoped to the selected folder and destination.
 - The last successful upload time.
@@ -219,7 +219,7 @@ Clone the default HTTP transport per client, preserve certificate verification, 
 
 ### Automatic Log Rotation
 
-Write `%LOCALAPPDATA%\CWG2Uploader\uploader.log`, capped at 2 MiB, retaining three previous files. Rotation is built into the application and requires no external tool or user maintenance. Stage the closed current log under a unique sibling filename before aging backups, so a blocked current-log rename leaves backups untouched on every retry. If backup rotation fails, restore the staged current log; if restoration also fails, retain the staged file and include its path in the returned error. This is not a transaction across all backup files.
+Write `%LOCALAPPDATA%\CWGRPGUploader\uploader.log`, capped at 2 MiB, retaining three previous files. Rotation is built into the application and requires no external tool or user maintenance. Stage the closed current log under a unique sibling filename before aging backups, so a blocked current-log rename leaves backups untouched on every retry. If backup rotation fails, restore the staged current log; if restoration also fails, retain the staged file and include its path in the returned error. This is not a transaction across all backup files.
 
 Truncate individual disk-log entries to at most 256 KiB, including an explicit marker and without splitting valid UTF-8 characters. Do not modify the caller's buffer or truncate console output; successful writes report the entire input consumed.
 

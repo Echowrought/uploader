@@ -7,14 +7,14 @@
 
 [Setup]
 AppId=cwg-rpg-community.uploader
-AppName=CWG2 Uploader
+AppName=CWG RPG Uploader
 AppVersion={#AppVersion}
 AppPublisher=CWG RPG Community
 AppPublisherURL=https://github.com/cwg-rpg-community/uploader
 AppSupportURL=https://github.com/cwg-rpg-community/uploader/issues
 AppUpdatesURL=https://github.com/cwg-rpg-community/uploader/releases
-DefaultDirName={localappdata}\Programs\CWG2Uploader
-DefaultGroupName=CWG2 Uploader
+DefaultDirName={localappdata}\Programs\CWGRPGUploader
+DefaultGroupName=CWG RPG Uploader
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -22,8 +22,8 @@ MinVersion=10.0
 DisableProgramGroupPage=yes
 DisableDirPage=yes
 LicenseFile={#BuildDir}\LICENSE
-UninstallDisplayIcon={app}\cwg2-uploader.exe
-AppMutex=Local\CWG2Uploader
+UninstallDisplayIcon={app}\cwg-rpg-uploader.exe
+AppMutex=Local\CWGRPGUploader
 CloseApplications=no
 RestartApplications=no
 Compression=lzma2
@@ -31,14 +31,14 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
-Source: "{#BuildDir}\cwg2-uploader.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\cwg-rpg-uploader.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\VERIFYING.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CWG2 Uploader"; Filename: "{app}\cwg2-uploader.exe"
+Name: "{group}\CWG RPG Uploader"; Filename: "{app}\cwg-rpg-uploader.exe"
 Name: "{group}\Read me"; Filename: "{app}\README.md"
 
 ; Intentionally no [Run] entries: installation must not start live uploads.
@@ -54,11 +54,11 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     StartupKey := 'Software\Microsoft\Windows\CurrentVersion\Run';
-    if RegQueryStringValue(HKCU, StartupKey, 'CWG2Uploader', Command) then
+    if RegQueryStringValue(HKCU, StartupKey, 'CWGRPGUploader', Command) then
     begin
       // Do not delete a registration belonging to a separate portable copy.
-      if CompareText(Trim(Command), '"' + ExpandConstant('{app}\cwg2-uploader.exe') + '"') = 0 then
-        RegDeleteValue(HKCU, StartupKey, 'CWG2Uploader');
+      if CompareText(Trim(Command), '"' + ExpandConstant('{app}\cwg-rpg-uploader.exe') + '"') = 0 then
+        RegDeleteValue(HKCU, StartupKey, 'CWGRPGUploader');
     end;
   end;
 end;

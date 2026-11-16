@@ -1,15 +1,17 @@
-# CWG2 Uploader
+# CWG RPG Uploader
 
-A Windows 10+ system-tray application written in Go. It watches CWG2 saves and automatically submits stable snapshots to the [CWG2 public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
+A Windows 10+ system-tray application written in Go. It watches CWG RPG saves and automatically submits stable snapshots to the [CWG RPG public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
 
 **Starting the app enables automatic uploads by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. This app is not affiliated with the leaderboard service. It never modifies game saves.
 
 ## Run
 
-1. Run the Windows installer, then launch **CWG2 Uploader** from the Start menu. Alternatively, extract the portable tray ZIP to a permanent location and launch `cwg2-uploader.exe`. Setup does not launch the app automatically.
+1. Run the Windows installer, then launch **CWG RPG Uploader** from the Start menu. Alternatively, extract the portable tray ZIP to a permanent location and launch `cwg-rpg-uploader.exe`. Setup does not launch the app automatically.
 2. Read the upload notice before the first normal run. Console mode prints it; dry runs leave the normal-run notice pending. Look for the uploader in the Windows notification area (possibly under the hidden-icons arrow).
 3. The app finds your Windows Documents folder and watches `Warcraft III\CustomMapData\CWG2`. Usually this is `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`.
 4. If needed, use **Choose save folder...** in the tray menu. The picker closes when the uploader exits, including forced termination.
+
+`CWG2` is the map's current save-directory name, independent of the uploader's branding.
 
 The app polls every five seconds and waits at least five seconds of observed stability before uploading. Internet failures retry automatically. Invalid submissions stop retrying until the saves change or you choose **Upload now**.
 
@@ -28,7 +30,7 @@ Successes stay quiet. Check the tray status for errors; bounded logs provide dia
 
 ## Configuration and logs
 
-Application data lives in `%LOCALAPPDATA%\CWG2Uploader\`, not alongside the executable:
+Application data lives in `%LOCALAPPDATA%\CWGRPGUploader\`, not alongside the executable:
 
 - `config.json`: human-editable settings.
 - `state.json`: the last successful snapshot fingerprint and upload summary.
@@ -98,8 +100,8 @@ To check and build:
 
 This deletes the previous `dist` directory, runs `scripts\check.ps1`, then produces:
 
-- `dist\cwg2-uploader.exe`: starts in tray mode, without a console window.
-- `dist\cwg2-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
+- `dist\cwg-rpg-uploader.exe`: starts in tray mode, without a console window.
+- `dist\cwg-rpg-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
 
 Both binaries retain Go symbol tables and DWARF debug information for debugging and inspection, at the cost of larger executables.
 
@@ -112,14 +114,14 @@ Or run commands individually:
 ```powershell
 go test ./...
 go vet ./...
-go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg2-uploader.exe .
-go build -tags=console -trimpath -o dist/cwg2-uploader-console.exe .
+go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg-rpg-uploader.exe .
+go build -tags=console -trimpath -o dist/cwg-rpg-uploader-console.exe .
 ```
 
 Inspect one stable snapshot without submitting anything:
 
 ```powershell
-.\dist\cwg2-uploader-console.exe --dry-run
+.\dist\cwg-rpg-uploader-console.exe --dry-run
 ```
 
 Dry run prints the eligible file count and exits after reading a valid stable snapshot. It does not upload or write successful-upload state; it still creates default configuration and logs if absent. If saves are missing, it keeps waiting; press Ctrl+C to stop. Use the console binary for command-line output; the GUI binary also accepts `--dry-run`, but has no guaranteed terminal output.

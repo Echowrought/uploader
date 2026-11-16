@@ -12,9 +12,9 @@ import (
 	"unicode"
 	"unicode/utf16"
 
-	"cwg2uploader/internal/app"
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/app"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
 	"github.com/getlantern/systray"
 )
 
@@ -26,7 +26,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 	defer job.Close()
 	systray.Run(func() {
 		systray.SetIcon(trayIcon())
-		systray.SetTooltip("CWG2 Uploader")
+		systray.SetTooltip("CWG RPG Uploader")
 		statusItem := systray.AddMenuItem("Starting...", "Show full status")
 		lastItem := systray.AddMenuItem("Last upload: never", "")
 		lastItem.Disable()
@@ -53,7 +53,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			}
 			showError := func(err error) {
 				if err != nil {
-					go Message("CWG2 Uploader", err.Error())
+					go Message("CWG RPG Uploader", err.Error())
 				}
 			}
 			showError(startupErr)
@@ -69,7 +69,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case update := <-updates:
 					latest = update
 					statusItem.SetTitle(display(update.Message, 90))
-					systray.SetTooltip(tooltip("CWG2: " + update.Message))
+					systray.SetTooltip(tooltip("CWG RPG: " + update.Message))
 					if !update.LastUpload.IsZero() {
 						lastItem.SetTitle("Last upload: " + update.LastUpload.Format("2006-01-02 15:04:05"))
 					}
@@ -80,7 +80,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					}
 				case <-statusItem.ClickedCh:
 					text := latest.Message + "\n\nSave folder: " + latest.Config.SaveFolder
-					go Message("CWG2 Uploader status", text)
+					go Message("CWG RPG Uploader status", text)
 				case <-automaticUploads.ClickedCh:
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:

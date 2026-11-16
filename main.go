@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 
-	"cwg2uploader/internal/app"
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/storage"
-	ui "cwg2uploader/internal/windows"
+	"cwgrpguploader/internal/app"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
+	ui "cwgrpguploader/internal/windows"
 )
 
 func main() {
@@ -36,7 +36,7 @@ func main() {
 		if console {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			ui.Message("CWG2 Uploader", err.Error())
+			ui.Message("CWG RPG Uploader", err.Error())
 		}
 		os.Exit(1)
 	}
@@ -80,7 +80,7 @@ func run(console, dryRun bool) error {
 			_, err := fmt.Fprintln(os.Stdout, message)
 			return err
 		}
-		return ui.Message("CWG2 Uploader", message)
+		return ui.Message("CWG RPG Uploader", message)
 	}
 	if err := ensureUploadNotice(dir, &config, dryRun, showNotice); err != nil {
 		return err
@@ -123,7 +123,7 @@ func ensureUploadNotice(dir string, config *storage.Config, dryRun bool, show fu
 	if config.UploadNoticeShown {
 		return nil
 	}
-	message := "This app sends CWG2 saves to a third-party public leaderboard. Existing saves upload when Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder through the tray or config.json. Already queued uploads and retries continue when Automatic uploads is off."
+	message := "This app sends CWG RPG saves to a third-party public leaderboard. Existing saves upload when Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder through the tray or config.json. Already queued uploads and retries continue when Automatic uploads is off."
 	message += fmt.Sprintf("\n\nAutomatic uploads configured: %t\nConfiguration and rotating logs: %s", config.Automatic, dir)
 	if dryRun {
 		message = "Dry run: no saves will be uploaded. This notice will appear again before the first normal run.\n\n" + message

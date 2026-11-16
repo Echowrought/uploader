@@ -62,7 +62,7 @@ func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, err
 		return Result{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "CWG2Uploader/0.1")
+	req.Header.Set("User-Agent", "CWGRPGUploader/0.1")
 	response, err := c.HTTP.Do(req)
 	if err != nil {
 		retry := true

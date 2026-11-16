@@ -85,27 +85,27 @@ jobs:
         )
 
         Compress-Archive `
-          -Path (@("./dist/cwg2-uploader.exe") + $docs) `
-          -DestinationPath "cwg2-uploader-$tag-windows-amd64.zip"
+          -Path (@("./dist/cwg-rpg-uploader.exe") + $docs) `
+          -DestinationPath "cwg-rpg-uploader-$tag-windows-amd64.zip"
 
         Compress-Archive `
-          -Path (@("./dist/cwg2-uploader-console.exe") + $docs) `
-          -DestinationPath "cwg2-uploader-console-$tag-windows-amd64.zip"
+          -Path (@("./dist/cwg-rpg-uploader-console.exe") + $docs) `
+          -DestinationPath "cwg-rpg-uploader-console-$tag-windows-amd64.zip"
     - name: Attest release files
       uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
       with:
         subject-path: |
-          cwg2-uploader-*.zip
-          dist/cwg2-uploader-*-setup.exe
+          cwg-rpg-uploader-*.zip
+          dist/cwg-rpg-uploader-*-setup.exe
           build-info.json
     - name: Create draft release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         $tag = $env:GITHUB_REF_NAME
-        $tray = "cwg2-uploader-$tag-windows-amd64.zip"
-        $console = "cwg2-uploader-console-$tag-windows-amd64.zip"
-        $installer = "cwg2-uploader-$tag-windows-amd64-setup.exe"
+        $tray = "cwg-rpg-uploader-$tag-windows-amd64.zip"
+        $console = "cwg-rpg-uploader-console-$tag-windows-amd64.zip"
+        $installer = "cwg-rpg-uploader-$tag-windows-amd64-setup.exe"
         $repository = $env:GITHUB_REPOSITORY
         $download = "$env:GITHUB_SERVER_URL/$repository/releases/download/$tag"
         $verification = "$env:GITHUB_SERVER_URL/$repository/blob/$tag/VERIFYING.md"

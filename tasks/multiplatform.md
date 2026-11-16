@@ -30,7 +30,7 @@ Go selects `_windows.go` and `_linux.go` files automatically. Use build constrai
 
 | Feature | Windows | Linux |
 | --- | --- | --- |
-| Configuration and state | Existing `%LOCALAPPDATA%\CWG2Uploader\` layout | XDG configuration and state directories |
+| Configuration and state | Existing `%LOCALAPPDATA%\CWGRPGUploader\` layout | XDG configuration and state directories |
 | Save discovery | Documents known folder | Usually a user-configured Wine/Proton save path |
 | Background startup | Tray-managed current-user Run registration; no config preference | Optional systemd user service running console mode; no startup checkbox |
 | Single instance | Named mutex | Per-user file lock |

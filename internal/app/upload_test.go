@@ -14,8 +14,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/saves"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/saves"
 )
 
 func TestUploaderAutomaticallyStartsLatestPendingSnapshot(t *testing.T) {

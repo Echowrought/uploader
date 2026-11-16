@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
 )
 
 type Uploader interface {

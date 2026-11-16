@@ -9,7 +9,7 @@ import (
 )
 
 const startupKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
-const startupValueName = "CWG2Uploader"
+const startupValueName = "CWGRPGUploader"
 
 // StartupEnabled reports whether our registration points to this executable.
 // Windows startup policy may independently prevent registered apps from running.

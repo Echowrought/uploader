@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"cwg2uploader/internal/saves"
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/saves"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestRenderStatusWithHistory(t *testing.T) {
@@ -41,7 +41,7 @@ func TestRenderStatus(t *testing.T) {
 		view statusView
 		want string
 	}{
-		{"starting", statusView{}, "Starting; automatic uploads send saves to the public CWG2 leaderboard"},
+		{"starting", statusView{}, "Starting; automatic uploads send saves to the public CWG RPG leaderboard"},
 		{"automatic off", statusView{folder: pollEvent{kind: pollDisabled}}, "Automatic uploads off"},
 		{"settling", statusView{folder: pollEvent{kind: pollSettling, err: saves.ErrSettling}}, saves.ErrSettling.Error()},
 		{"stable is detection only", statusView{folder: pollEvent{kind: pollStable}}, "No new changes"},

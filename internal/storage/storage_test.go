@@ -43,7 +43,7 @@ func TestConfigPersistsUserSettings(t *testing.T) {
 
 func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
 	folder := t.TempDir()
-	t.Setenv("CWG2_CONFIG_TEST_RELATIVE", "relative")
+	t.Setenv("CWG_RPG_CONFIG_TEST_RELATIVE", "relative")
 	cases := []struct {
 		name   string
 		config Config
@@ -53,7 +53,7 @@ func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
 		{"excessive interval", Config{SaveFolder: folder, PollSeconds: 3601}},
 		{"empty folder", Config{PollSeconds: 5}},
 		{"relative folder", Config{SaveFolder: "relative", PollSeconds: 5}},
-		{"relative environment path", Config{SaveFolder: "%CWG2_CONFIG_TEST_RELATIVE%", PollSeconds: 5}},
+		{"relative environment path", Config{SaveFolder: "%CWG_RPG_CONFIG_TEST_RELATIVE%", PollSeconds: 5}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,8 +155,8 @@ func TestLoadConfigRejectsInvalidDefaultsWithoutWritingThem(t *testing.T) {
 
 func TestConfigPreservesEnvironmentPaths(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CWG2_CONFIG_TEST_HOME", t.TempDir())
-	want := Config{SaveFolder: "%CWG2_CONFIG_TEST_HOME%", PollSeconds: 5, Automatic: true}
+	t.Setenv("CWG_RPG_CONFIG_TEST_HOME", t.TempDir())
+	want := Config{SaveFolder: "%CWG_RPG_CONFIG_TEST_HOME%", PollSeconds: 5, Automatic: true}
 
 	saveErr := SaveConfig(dir, want)
 	got, _, loadErr := LoadConfig(dir, configDefault("unused"))
@@ -195,9 +195,9 @@ func TestConfigIgnoresLegacyStartupPreference(t *testing.T) {
 
 func TestExpandPathExpandsWindowsVariables(t *testing.T) {
 	folder := t.TempDir()
-	t.Setenv("CWG2_TEST_HOME", folder)
+	t.Setenv("CWG_RPG_TEST_HOME", folder)
 
-	got, err := ExpandPath(`%CWG2_TEST_HOME%\saves`)
+	got, err := ExpandPath(`%CWG_RPG_TEST_HOME%\saves`)
 
 	if err != nil {
 		t.Fatal(err)

@@ -20,7 +20,7 @@ Build the profiler with the helper:
 .\scripts\build-profile.ps1
 ```
 
-This creates `profiles\cwg2-profile.exe`, keeps symbols for `pprof`, and selects the Windows GUI subsystem so a console window does not affect the measurement. It neither launches the executable nor changes `dist`. Profiling builds and artifacts are not included in release packages.
+This creates `profiles\cwg-rpg-profile.exe`, keeps symbols for `pprof`, and selects the Windows GUI subsystem so a console window does not affect the measurement. It neither launches the executable nor changes `dist`. Profiling builds and artifacts are not included in release packages.
 
 To compare toolchains, keep separate executables:
 
@@ -35,7 +35,7 @@ The helper temporarily overrides `GOTOOLCHAIN` for the build; Go may download th
 ```powershell
 $folder = "$env:USERPROFILE\Documents\Warcraft III\CustomMapData\CWG2"
 $arguments = '--save-folder "{0}" --output profiles --duration 30s' -f $folder
-$process = Start-Process .\profiles\cwg2-profile.exe -ArgumentList $arguments -Wait -PassThru -RedirectStandardError .\profiles\error.log
+$process = Start-Process .\profiles\cwg-rpg-profile.exe -ArgumentList $arguments -Wait -PassThru -RedirectStandardError .\profiles\error.log
 $process.ExitCode
 ```
 
@@ -91,7 +91,7 @@ Do not add Go counters to Windows counters: they describe overlapping memory wit
 Use the **matching executable from the same build**, especially when comparing toolchains:
 
 ```powershell
-go tool pprof -top -sample_index=inuse_space .\profiles\cwg2-profile.exe .\profiles\run-<id>\heap.pprof
+go tool pprof -top -sample_index=inuse_space .\profiles\cwg-rpg-profile.exe .\profiles\run-<id>\heap.pprof
 ```
 
 - `inuse_space`: sampled bytes still allocated, rather than total allocation churn.

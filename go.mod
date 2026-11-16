@@ -1,4 +1,4 @@
-module cwg2uploader
+module cwgrpguploader
 
 go 1.26.0
 

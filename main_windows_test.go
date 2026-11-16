@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestUploadNoticePersistsOnlyAfterPresentationAndDoesNotRepeat(t *testing.T) {

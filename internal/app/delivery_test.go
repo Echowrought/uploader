@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
+	"cwgrpguploader/internal/leaderboard"
 )
 
 func TestPendingNewFolderRemainsVisibleDuringOldFolderBackoff(t *testing.T) {

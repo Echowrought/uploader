@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestPollerReportsSupplementaryOmissionsWithoutReemittingCore(t *testing.T) {
