@@ -32,6 +32,9 @@ jobs:
         go-version: '1.27.3'
     - name: Build and test
       run: |
+        if ($env:GITHUB_REF_NAME -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+          throw 'Release tags must use vX.Y.Z: non-negative integers without leading zeros'
+        }
         if (git status --porcelain) { throw 'Release builds require a clean checkout' }
         ./build.ps1
     - name: Record build information
@@ -110,6 +113,7 @@ jobs:
         gh release create "$tag" "$tray" "$console" build-info.json `
           --verify-tag `
           --draft `
+          --prerelease `
           --title "$tag" `
           --notes-file release-notes.md `
           --generate-notes

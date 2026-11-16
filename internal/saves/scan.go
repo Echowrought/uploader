@@ -249,11 +249,11 @@ func validateEssential(files []metadata, maxFiles int) error {
 	hero, account := false, false
 	for _, m := range files {
 		upper := strings.ToUpper(m.Name)
-		hero = hero || strings.HasPrefix(upper, "HERO_")
-		account = account || (strings.HasPrefix(upper, "ACCOUNT_") && !strings.HasPrefix(upper, "ACCOUNT_VERIFY"))
+		hero = hero || strings.HasPrefix(upper, heroPrefix)
+		account = account || (strings.HasPrefix(upper, accountPrefix) && !strings.HasPrefix(upper, accountVerificationPrefix))
 	}
 	if !hero || !account {
-		return errors.New("waiting for HERO_ and ACCOUNT_ .pld files")
+		return fmt.Errorf("waiting for %s and %s .pld files", heroPrefix, accountPrefix)
 	}
 	if len(files) > maxFiles {
 		return fmt.Errorf("essential save set exceeds %d eligible files safety limit", maxFiles)
@@ -364,15 +364,6 @@ func inventory(ctx context.Context, folder string, maxEntries int) ([]metadata, 
 func eligible(name string) bool {
 	upper := strings.ToUpper(name)
 	return strings.HasSuffix(upper, ".PLD") && !strings.HasPrefix(upper, "PRIVATE_")
-}
-
-func essential(name string) bool {
-	upper := strings.ToUpper(name)
-	return strings.HasPrefix(upper, "HERO_") ||
-		strings.HasPrefix(upper, "ACCOUNT_") ||
-		strings.HasPrefix(upper, "ENTITLEMENTS_") ||
-		strings.HasPrefix(upper, "SETTINGS_") ||
-		strings.HasPrefix(upper, "LEGACY_")
 }
 
 func readFile(ctx context.Context, path string, expected metadata, maxBytes int64) (string, error) {

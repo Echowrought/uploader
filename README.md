@@ -144,7 +144,9 @@ Want to check where your download came from? See [VERIFYING.md](VERIFYING.md) fo
 
 ### Publishing and immutability
 
-The tag-triggered workflow creates a draft containing both packages, the attested build-info file, verification instructions, and generated change notes. Review and download-check the draft before publishing. Actions are pinned to full commit SHAs; update those pins deliberately when upgrading actions.
+Release tags use `vX.Y.Z`, with three non-negative integer components and no leading zeros. Versions are ordered numerically by X, then Y, then Z (for example, `v1.10.0` is newer than `v1.9.9`). The components do not promise Semantic Versioning compatibility semantics.
+
+The tag-triggered workflow creates a draft marked **pre-release** by default, containing both packages, the attested build-info file, verification instructions, and generated change notes. Review and download-check it before publishing. Publishing retains the pre-release flag; explicitly clear it when promoting a release to stable. Stability is determined by GitHub's release flag, not a suffix in the tag. Actions are pinned to full commit SHAs; update those pins deliberately when upgrading actions.
 
 An organization/repository administrator should enable **release immutability** in the repository's GitHub settings before publishing new releases. This setting is not enabled by the workflow. When enabled, publication locks the release assets and associated tag; the title and release notes remain editable. Finish attaching all assets while the release is a draft, and publish corrections as a new version. Do not assume previously published releases become immutable retroactively. Protect release tags and review workflow changes as well: provenance cannot protect against a malicious change authorized through the trusted workflow.
 
