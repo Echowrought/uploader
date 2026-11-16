@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
   <title>CWG RPG Uploader</title>
-  <desc>A charcoal shield with a muted-crimson outline and a sword-core blue upload arrow, reflecting the CWG Discord icon's colors.</desc>
-  <path fill="#A63B4B" d="M128 16C155 33 184 43 216 48v70c0 55-34 91-88 122-54-31-88-67-88-122V48c32-5 61-15 88-32Z"/>
-  <path fill="#090C11" d="M128 34c24 14 47 22 72 27v57c0 44-26 74-72 103-46-29-72-59-72-103V61c25-5 48-13 72-27Z"/>
-  <path fill="#7396E6" d="m128 65 44 44h-23v62h-42v-62H84Z"/>
+  <desc>A bold, tray-sized charcoal shield with a muted-crimson outline and a sword-core blue upload arrow, designed on a 20-pixel grid.</desc>
+  <path fill="#A63B4B" d="m10 0 9 4v6c0 4-3.5 7.5-9 10-5.5-2.5-9-6-9-10V4Z"/>
+  <path fill="#090C11" d="m10 2 7 3v5c0 3-2.5 5.7-7 8-4.5-2.3-7-5-7-8V5Z"/>
+  <path fill="#7396E6" d="m10 4 5 5h-3v5H8V9H5Z"/>
 </svg>

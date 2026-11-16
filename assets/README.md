@@ -2,7 +2,10 @@
 
 `icon.svg` is the editable source: a charcoal shield, muted-crimson outline,
 and a blue upload arrow inspired by the sword core in the CWG Discord icon.
-The artwork is original; the reference map artwork is not bundled.
+The artwork is original; the reference map artwork is not bundled. Its bold
+geometry uses a 20-pixel grid, with a larger arrow and less padding for tray
+legibility. Other sizes are rendered from this same design; Windows chooses the
+appropriate ICO image rather than being forced to display a fixed 20 px bitmap.
 
 The Windows assets are generated and committed:
 
