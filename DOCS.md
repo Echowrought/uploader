@@ -14,12 +14,16 @@ mode_tray_windows.go   # Default tray mode (without console build tag)
 mode_console_windows.go # Default console mode (console build tag)
 build.ps1              # Test, vet, and build release executables
 README.md
+CONFIGURATION.md
 DESIGN.md
 DOCS.md
 scripts/
   notices.ps1          # Generate dependency license notices
 
 internal/
+  buildinfo/
+    version.go         # Linker-injected release tag; defaults to dev
+
   app/
     app.go             # Initialization, event loop, and per-run state
     poll.go            # Stable folder events, last-emitted deduplication
@@ -43,7 +47,8 @@ internal/
     logging.go         # Built-in log rotation
 
   windows/
-    tray_windows.go    # Tray menu, status, actions, generated icon
+    tray_windows.go    # Tray menu, status, and actions
+    icon_windows.go    # Embedded static ICO; generated resources supply executable icons
     folders_windows.go # Known folders, folder picker, shell actions, instance lock
     subprocess_windows.go # Owned subprocess Job Object, launch, output, timeout
     startup_windows.go # Current-user sign-in startup registration
