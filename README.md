@@ -101,6 +101,8 @@ This deletes the previous `dist` directory, runs `scripts\check.ps1`, then produ
 - `dist\cwg2-uploader.exe`: starts in tray mode, without a console window.
 - `dist\cwg2-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
 
+Both binaries retain Go symbol tables and DWARF debug information for debugging and inspection, at the cost of larger executables.
+
 Both binaries share the same application code. Windows records the GUI/console subsystem in the executable: the GUI build avoids an unwanted console window, while the console build works naturally with terminal output, redirection, and shell waiting. Keeping them separate avoids console attachment/allocation code and GUI-process shell quirks. The console build uses the `console` Go build tag; the regular build does not.
 
 It also includes the README, verification instructions, and license notices. Failed builds remove partial `dist` output; keep anything you want to preserve elsewhere. `scripts\notices.ps1` is an internal helper called by `build.ps1`, not a standalone command.
@@ -110,8 +112,8 @@ Or run commands individually:
 ```powershell
 go test ./...
 go vet ./...
-go build -trimpath -ldflags="-H=windowsgui -s -w" -o dist/cwg2-uploader.exe .
-go build -tags=console -trimpath -ldflags="-s -w" -o dist/cwg2-uploader-console.exe .
+go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg2-uploader.exe .
+go build -tags=console -trimpath -o dist/cwg2-uploader-console.exe .
 ```
 
 Inspect one stable snapshot without submitting anything:

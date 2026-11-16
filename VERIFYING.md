@@ -80,13 +80,13 @@ $env:GOEXPERIMENT = ""
 
 if ((go env GOVERSION) -ne $build.go.GOVERSION) { throw "Install the exact Go version recorded in build-info.json" }
 
-go build -trimpath -ldflags="-H=windowsgui -s -w" -o dist/cwg2-uploader.exe .
+go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg2-uploader.exe .
 if ($LASTEXITCODE -ne 0) { throw "Tray build failed" }
-go build -tags=console -trimpath -ldflags="-s -w" -o dist/cwg2-uploader-console.exe .
+go build -tags=console -trimpath -o dist/cwg2-uploader-console.exe .
 if ($LASTEXITCODE -ne 0) { throw "Console build failed" }
 ```
 
-Use the instructions at the release tag you're checking, not necessarily the default branch: build settings can change between releases. Older releases may differ; v0.1.2, for example, used `CGO_ENABLED=1`.
+Use the instructions at the release tag you're checking, not necessarily the default branch: build settings can change between releases. Older releases may differ; v0.1.2, for example, used `CGO_ENABLED=1` and stripped symbols with `-s -w`.
 
 Compare the downloaded executable, your rebuilt executable, and the hash recorded in the verified build information:
 
