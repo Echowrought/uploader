@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090c11">
+  <meta name="description" content="Automatically upload your CWG RPG saves to the leaderboard. Keep your backups, inventory, and standings up to date without manual reuploads.">
+  <title>CWG RPG Uploader — Save in game. Stay up to date.</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body id="top">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="container">
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="CWG RPG Uploader home">
+        <img src="assets/icon.svg" width="32" height="32" alt="">
+        <span>CWG RPG <strong>Uploader</strong></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard">Leaderboard</a>
+        <a href="https://github.com/cwg-rpg-community/uploader">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow"><span class="marker" aria-hidden="true"></span> A companion for CWG RPG players</p>
+        <h1 id="hero-title">Save in game.<br><span>Stay up to date.</span></h1>
+        <p class="hero-copy">Your saves belong in the game, not in an upload form. This small tool watches your CWG save folder and sends changed saves to the leaderboard automatically.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/cwg-rpg-community/uploader/releases">Download the uploader <span aria-hidden="true">↓</span></a>
+          <a class="button secondary" href="https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard">View the leaderboard <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="platforms">Windows 10+ · Linux console · Free and open source</p>
+        <p class="launch-notice"><strong>Automatic uploads are on by default, including existing saves.</strong> Submissions go to the public CWG leaderboard.</p>
+      </section>
+
+      <section class="benefits" aria-label="Why automate uploads?">
+        <article class="benefit">
+          <p class="card-label"><span aria-hidden="true">01 /</span> Backups</p>
+          <h2>Keep a backup beyond your PC.</h2>
+          <p>The leaderboard provides backups of the saves you upload. Automatic uploads help keep those backups current as you play and save.</p>
+          <p class="fine-print">Backups are provided by the leaderboard, not a separate service in this app. Keep local copies of your saves too.</p>
+        </article>
+        <article class="benefit">
+          <p class="card-label"><span aria-hidden="true">02 /</span> Inventory &amp; standings</p>
+          <h2>Less reuploading.<br>More playing.</h2>
+          <p>No need to manually reupload saves whenever you want your inventory and standings updated on the leaderboard. While the uploader is running, new saves are sent for you.</p>
+        </article>
+      </section>
+
+      <section class="how-it-works" aria-labelledby="steps-title">
+        <div class="section-heading">
+          <p class="eyebrow">Getting started</p>
+          <h2 id="steps-title">Start it. Then save as usual.</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <h3>Download and run</h3>
+            <p>Use the Windows installer or a portable package. Linux is console-only. You don’t need Go installed.</p>
+          </li>
+          <li>
+            <h3>Choose your save folder</h3>
+            <p>The Windows tray app finds the usual CWG folder. Console builds need an explicit folder. <a href="https://github.com/cwg-rpg-community/uploader/blob/master/README.md#console-and-dry-run">See setup instructions.</a></p>
+          </li>
+          <li>
+            <h3>Keep playing</h3>
+            <p>Leave the app running. When you save in game, it waits for the files to settle and uploads the changed snapshot.</p>
+          </li>
+        </ol>
+      </section>
+
+      <aside class="disclosure" aria-labelledby="disclosure-title">
+        <div class="disclosure-heading">
+          <span class="notice-icon" aria-hidden="true">!</span>
+          <h2 id="disclosure-title">Know what gets uploaded</h2>
+        </div>
+        <p>The app sends eligible <strong>.pld files directly inside your selected CWG save folder</strong> to the leaderboard. <strong>It never scans subfolders and never modifies your game saves.</strong> Uploads respect settling and safety limits.</p>
+        <p>Submissions may appear publicly. Read the <a href="https://github.com/cwg-rpg-community/uploader/blob/master/README.md">README</a> before running the app.</p>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <span>CWG RPG Uploader</span>
+      <div>
+        <a href="https://github.com/cwg-rpg-community/uploader/issues">Help &amp; feedback</a>
+        <a href="https://github.com/cwg-rpg-community/uploader/blob/master/LICENSE">MIT license</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

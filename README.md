@@ -62,7 +62,7 @@ Successful uploads stay quiet. Check the status and logs for errors. Only one in
 
 ### Which saves are uploaded?
 
-The app reads regular `.pld` files directly inside the selected folder, case-insensitively. It excludes `PRIVATE_*`, but includes account-verification files and unknown categories. It does not scan subfolders or select between accounts; the backend validates the submitted accounts.
+The app reads regular `.pld` files directly inside the selected folder, case-insensitively. Account-verification files and unknown categories are included. It does not scan subfolders or select between accounts; the backend validates the submitted accounts.
 
 It polls every five seconds and requires at least five seconds of observed stability. Hero, account, entitlements, settings, and legacy files are essential: every such file present needs a settled version, with at least one hero and one non-verification account required. While a replacement settles, the app can keep using its previous settled contents. Supplementary files do not block the essential set.
 
@@ -118,6 +118,7 @@ Both build scripts default to version `dev`. Use `-Version vX.Y.Z` to embed a re
 - [Development guide](DOCS.md): builds, tests, release policy, and code organization.
 - [Design](DESIGN.md): synchronization, file selection, and safety contracts.
 - [Profiling](cmd/profile/readme.md): upload-disabled memory diagnostics.
+- [Website](site/README.md): landing-page preview and GitHub Pages deployment.
 
 ## License
 
