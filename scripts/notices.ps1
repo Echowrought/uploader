@@ -14,7 +14,7 @@ try {
 $sections = [System.Collections.Generic.List[string]]::new()
 $sections.Add("# Third-party notices`n`nGenerated from the Windows build dependencies. Includes the Go runtime license.")
 $sections.Add("## Go runtime and standard library`n`n" + '```text' + "`n" + [IO.File]::ReadAllText((Join-Path $root 'LICENSE')) + "`n" + '```')
-foreach ($line in ($lines | Where-Object { $_ -and ($_ -notlike 'cwg2uploader|*') } | Sort-Object -Unique)) {
+foreach ($line in ($lines | Where-Object { $_ -and ($_ -notlike 'cwgrpguploader|*') } | Sort-Object -Unique)) {
     $parts = $line -split '\|', 2
     $files = Get-ChildItem -LiteralPath $parts[1] -File | Where-Object { $_.Name -match '^(LICENSE|COPYING|NOTICE)' }
     if (-not $files) { throw "Missing license for $($parts[0])" }

@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"cwg2uploader/internal/app"
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/storage"
-	ui "cwg2uploader/internal/windows"
+	"cwgrpguploader/internal/app"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
+	ui "cwgrpguploader/internal/windows"
 )
 
 func main() {

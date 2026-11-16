@@ -3,7 +3,7 @@ package app
 import (
 	"time"
 
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/storage"
 )
 
 type Status struct {

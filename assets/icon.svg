@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+  <title>CWG RPG Uploader</title>
+  <desc>A bold, tray-sized charcoal shield with a muted-crimson outline and a sword-core blue upload arrow, designed on a 20-pixel grid.</desc>
+  <path fill="#A63B4B" d="m10 0 9 4v6c0 4-3.5 7.5-9 10-5.5-2.5-9-6-9-10V4Z"/>
+  <path fill="#090C11" d="m10 2 7 3v5c0 3-2.5 5.7-7 8-4.5-2.3-7-5-7-8V5Z"/>
+  <path fill="#7396E6" d="m10 4 5 5h-3v5H8V9H5Z"/>
+</svg>

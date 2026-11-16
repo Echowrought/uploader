@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"cwg2uploader/internal/saves"
+	"cwgrpguploader/internal/saves"
 )
 
 // folderPoller owns detection and event deduplication, not delivery state.

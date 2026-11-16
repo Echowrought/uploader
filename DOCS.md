@@ -1,6 +1,6 @@
 # Code Organization
 
-This is the implementation layout for the CWG2 uploader. Product behavior and technical decisions are documented in [DESIGN.md](DESIGN.md).
+This is the implementation layout for CWG RPG Uploader. Product behavior and technical decisions are documented in [DESIGN.md](DESIGN.md). Icon artwork and asset regeneration are documented in [assets/README.md](assets/README.md).
 
 ## Layout
 

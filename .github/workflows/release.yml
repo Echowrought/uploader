@@ -32,8 +32,16 @@ jobs:
         go-version: '1.27.3'
     - name: Build and test
       run: |
+        if ($env:GITHUB_REF_NAME -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+          throw 'Release tags must use vX.Y.Z: non-negative integers without leading zeros'
+        }
         if (git status --porcelain) { throw 'Release builds require a clean checkout' }
         ./build.ps1
+    - name: Build installer
+      run: |
+        $compiler = & ./scripts/install-inno.ps1 -Destination "$env:RUNNER_TEMP\inno-setup"
+        & ./scripts/build-installer.ps1 -Version $env:GITHUB_REF_NAME -ISCCPath $compiler
+        "INNO_COMPILER=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Record build information
       run: |
         $goEnvironment = go env -json GOVERSION GOOS GOARCH GOAMD64 CGO_ENABLED GOTOOLCHAIN GOFLAGS GOEXPERIMENT
@@ -59,6 +67,10 @@ jobs:
           runner_image_version = $env:ImageVersion
           powershell_version = $PSVersionTable.PSVersion.ToString()
           go = ($goEnvironment | ConvertFrom-Json)
+          inno_setup = [ordered]@{
+            version = (Get-Item $env:INNO_COMPILER).VersionInfo.ProductVersion
+            compiler_sha256 = (Get-FileHash $env:INNO_COMPILER -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
           actions = $actions
           executables = $executables
         } | ConvertTo-Json -Depth 5 | Set-Content build-info.json -Encoding utf8
@@ -73,43 +85,49 @@ jobs:
         )
 
         Compress-Archive `
-          -Path (@("./dist/cwg2-uploader.exe") + $docs) `
-          -DestinationPath "cwg2-uploader-$tag-windows-amd64.zip"
+          -Path (@("./dist/cwg-rpg-uploader.exe") + $docs) `
+          -DestinationPath "cwg-rpg-uploader-$tag-windows-amd64.zip"
 
         Compress-Archive `
-          -Path (@("./dist/cwg2-uploader-console.exe") + $docs) `
-          -DestinationPath "cwg2-uploader-console-$tag-windows-amd64.zip"
+          -Path (@("./dist/cwg-rpg-uploader-console.exe") + $docs) `
+          -DestinationPath "cwg-rpg-uploader-console-$tag-windows-amd64.zip"
     - name: Attest release files
       uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
       with:
         subject-path: |
-          cwg2-uploader-*.zip
+          cwg-rpg-uploader-*.zip
+          dist/cwg-rpg-uploader-*-setup.exe
           build-info.json
     - name: Create draft release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         $tag = $env:GITHUB_REF_NAME
-        $tray = "cwg2-uploader-$tag-windows-amd64.zip"
-        $console = "cwg2-uploader-console-$tag-windows-amd64.zip"
+        $tray = "cwg-rpg-uploader-$tag-windows-amd64.zip"
+        $console = "cwg-rpg-uploader-console-$tag-windows-amd64.zip"
+        $installer = "cwg-rpg-uploader-$tag-windows-amd64-setup.exe"
         $repository = $env:GITHUB_REPOSITORY
         $download = "$env:GITHUB_SERVER_URL/$repository/releases/download/$tag"
         $verification = "$env:GITHUB_SERVER_URL/$repository/blob/$tag/VERIFYING.md"
         @"
         ## Downloads
-        - [Windows tray app (recommended)]($download/$tray)
-        - [Windows console app (if you prefer console)]($download/$console)
+        - [Windows installer (tray app)]($download/$installer)
+        - [Portable Windows tray app]($download/$tray)
+        - [Portable Windows console app]($download/$console)
 
-        Extract the tray ZIP and launch cwg2-uploader.exe. Starting the app enables automatic save uploads by default; read the included README first. Executables are unsigned, so Windows SmartScreen may display a warning.
+        Setup installs for the current user without administrator rights and offers shortcut and sign-in startup choices. Upgrades use Windows Restart Manager to request graceful closure of the installed app. The final launch option is checked by default; uncheck it to leave the app stopped. Silent setup never launches it. Configuration/history are retained on upgrades and uninstall.
+
+        For portable use, extract the ZIP and launch the executable. Starting either app enables automatic save uploads by default; read the included README first. Executables and setup are unsigned, so Windows SmartScreen may display a warning.
 
         ## Verify this release
         This section is for geeks. Or those who really want to check where their download came from.
 
         Follow the [verification instructions]($verification) to check this release's attestations, or rebuild [this tag]($env:GITHUB_SERVER_URL/$repository/tree/$tag) yourself and compare executable hashes. No team access is needed.
         "@ | Set-Content release-notes.md -Encoding utf8
-        gh release create "$tag" "$tray" "$console" build-info.json `
+        gh release create "$tag" "$tray" "$console" "./dist/$installer" build-info.json `
           --verify-tag `
           --draft `
+          --prerelease `
           --title "$tag" `
           --notes-file release-notes.md `
           --generate-notes

@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
+	"cwgrpguploader/internal/leaderboard"
 )
 
 func TestWorkLogContextPersistsAcrossRetriesAndChangesForNewEmissions(t *testing.T) {

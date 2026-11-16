@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestPersistenceRetrySavesLatestSuccessWithAutomaticOff(t *testing.T) {

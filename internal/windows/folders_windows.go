@@ -17,7 +17,7 @@ func DataFolder() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(folder, "CWG2Uploader"), nil
+	return filepath.Join(folder, "CWGRPGUploader"), nil
 }
 
 func DefaultSaveFolder() (string, error) {
@@ -30,7 +30,7 @@ func DefaultSaveFolder() (string, error) {
 
 // PickFolder uses Windows PowerShell's built-in Forms dialog; no external runtime install.
 func PickFolder(job *subprocessJob) (string, error) {
-	script := `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose your CWG2 save folder'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; [Console]::Write($d.SelectedPath) }; $d.Dispose()`
+	script := `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose your CWG RPG save folder'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; [Console]::Write($d.SelectedPath) }; $d.Dispose()`
 	executable, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		return "", fmt.Errorf("open folder picker: %w", err)
@@ -74,13 +74,13 @@ func Message(title, message string) error {
 }
 
 func SingleInstance() (func(), error) {
-	name, _ := win.UTF16PtrFromString(`Local\CWG2Uploader`)
+	name, _ := win.UTF16PtrFromString(`Local\CWGRPGUploader`)
 	handle, err := win.CreateMutex(nil, false, name)
 	if err != nil {
 		if handle != 0 {
 			win.CloseHandle(handle)
 		}
-		return nil, errors.New("CWG2 Uploader is already running, or its instance lock is unavailable")
+		return nil, errors.New("CWG RPG Uploader is already running, or its instance lock is unavailable")
 	}
 	return func() { win.CloseHandle(handle) }, nil
 }

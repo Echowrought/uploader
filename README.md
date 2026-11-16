@@ -1,15 +1,17 @@
-# CWG2 Uploader
+# CWG RPG Uploader
 
-A Windows 10+ system-tray application written in Go. It watches CWG2 saves and automatically submits stable snapshots to the [CWG2 public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
+A Windows 10+ system-tray application written in Go. It watches CWG RPG saves and automatically submits stable snapshots to the [CWG RPG public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
 
 **Starting the app enables automatic uploads by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. This app is not affiliated with the leaderboard service. It never modifies game saves.
 
 ## Run
 
-1. Place `cwg2-uploader.exe` in a permanent location and launch it.
+1. Run the Windows installer and choose shortcuts, sign-in startup, and whether to launch at the end. Alternatively, extract the portable tray ZIP to a permanent location and launch `cwg-rpg-uploader.exe`. See [installer/README.md](installer/README.md) for installer options and upgrade behavior.
 2. Read the upload notice before the first normal run. Console mode prints it; dry runs leave the normal-run notice pending. Look for the uploader in the Windows notification area (possibly under the hidden-icons arrow).
 3. The app finds your Windows Documents folder and watches `Warcraft III\CustomMapData\CWG2`. Usually this is `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`.
 4. If needed, use **Choose save folder...** in the tray menu. The picker closes when the uploader exits, including forced termination.
+
+`CWG2` is the map's current save-directory name, independent of the uploader's branding.
 
 The app polls every five seconds and waits at least five seconds of observed stability before uploading. Internet failures retry automatically. Invalid submissions stop retrying until the saves change or you choose **Upload now**.
 
@@ -28,7 +30,7 @@ Successes stay quiet. Check the tray status for errors; bounded logs provide dia
 
 ## Configuration and logs
 
-Application data lives in `%LOCALAPPDATA%\CWG2Uploader\`, not alongside the executable:
+Application data lives in `%LOCALAPPDATA%\CWGRPGUploader\`, not alongside the executable:
 
 - `config.json`: human-editable settings.
 - `state.json`: the last successful snapshot fingerprint and upload summary.
@@ -98,8 +100,8 @@ To check and build:
 
 This deletes the previous `dist` directory, runs `scripts\check.ps1`, then produces:
 
-- `dist\cwg2-uploader.exe`: starts in tray mode, without a console window.
-- `dist\cwg2-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
+- `dist\cwg-rpg-uploader.exe`: starts in tray mode, without a console window.
+- `dist\cwg-rpg-uploader-console.exe`: starts in console mode, without the tray, and prints logs to the terminal. No mode flag is needed.
 
 Both binaries retain Go symbol tables and DWARF debug information for debugging and inspection, at the cost of larger executables.
 
@@ -112,14 +114,14 @@ Or run commands individually:
 ```powershell
 go test ./...
 go vet ./...
-go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg2-uploader.exe .
-go build -tags=console -trimpath -o dist/cwg2-uploader-console.exe .
+go build -trimpath -ldflags="-H=windowsgui" -o dist/cwg-rpg-uploader.exe .
+go build -tags=console -trimpath -o dist/cwg-rpg-uploader-console.exe .
 ```
 
 Inspect one stable snapshot without submitting anything:
 
 ```powershell
-.\dist\cwg2-uploader-console.exe --dry-run
+.\dist\cwg-rpg-uploader-console.exe --dry-run
 ```
 
 Dry run prints the eligible file count and exits after reading a valid stable snapshot. It does not upload or write successful-upload state; it still creates default configuration and logs if absent. If saves are missing, it keeps waiting; press Ctrl+C to stop. Use the console binary for command-line output; the GUI binary also accepts `--dry-run`, but has no guaranteed terminal output.
@@ -128,15 +130,19 @@ Dry run prints the eligible file count and exits after reading a valid stable sn
 
 Automated tests use temporary save fixtures and local HTTP servers, not the real leaderboard. Timer-heavy app tests use Go's `testing/synctest` virtual clock: production settling periods, retries, and deadline checks are preserved without waiting real seconds. Filesystem limits and subprocess tests still exercise real OS operations. Scanner boundary tests pass a smaller per-instance policy (16 entries, 8 saves, 64-byte files, 256-byte snapshots) through the same code as production. Separate checks preserve the production defaults, multi-batch enumeration, and a full-size 8 MiB file boundary. A live upload still needs compatibility verification with explicitly approved saves.
 
+### Windows installer
+
+See [installer/README.md](installer/README.md) for installer builds, upgrades, uninstall behavior, and packaging verification. The normal Go build does not require Inno Setup.
+
 ### Memory profiling build (no uploads)
 
 See [cmd/profile/readme.md](cmd/profile/readme.md) for profiling builds, usage, safety guarantees, and interpreting memory measurements.
 
 ## Distribution
 
-Distribute the tray executable; players do not need Go installed. Builds are currently unsigned, so Windows SmartScreen may display a warning. Keep third-party license notices with releases (see `THIRD_PARTY_NOTICES.md`).
+Releases include a per-user Windows tray installer, plus separate portable tray and console packages. Players do not need Go installed. Builds and setup are currently unsigned, so Windows SmartScreen may display a warning. Keep third-party license notices with releases (see `THIRD_PARTY_NOTICES.md`).
 
-To uninstall, first disable **Launch at Windows sign-in**, quit, and delete the executable. Optionally delete `%LOCALAPPDATA%\CWG2Uploader\`. Removing local data does not remove submissions already held by the leaderboard service.
+For installed copies, quit and uninstall through Windows Installed apps; configuration/history are retained. For portable copies, disable **Launch at Windows sign-in**, quit, and delete the executable. See [installer/README.md](installer/README.md) for installation and cleanup details. Removing local data does not remove submissions already held by the leaderboard service.
 
 ### Verify a release
 
@@ -144,7 +150,9 @@ Want to check where your download came from? See [VERIFYING.md](VERIFYING.md) fo
 
 ### Publishing and immutability
 
-The tag-triggered workflow creates a draft containing both packages, the attested build-info file, verification instructions, and generated change notes. Review and download-check the draft before publishing. Actions are pinned to full commit SHAs; update those pins deliberately when upgrading actions.
+Release tags use `vX.Y.Z`, with three non-negative integer components and no leading zeros. Versions are ordered numerically by X, then Y, then Z (for example, `v1.10.0` is newer than `v1.9.9`). The components do not promise Semantic Versioning compatibility semantics.
+
+The tag-triggered workflow creates a draft marked **pre-release** by default, containing the installer, both portable packages, the attested build-info file, verification instructions, and generated change notes. Review and download-check it before publishing. Publishing retains the pre-release flag; explicitly clear it when promoting a release to stable. Stability is determined by GitHub's release flag, not a suffix in the tag. Actions are pinned to full commit SHAs; update those pins deliberately when upgrading actions.
 
 An organization/repository administrator should enable **release immutability** in the repository's GitHub settings before publishing new releases. This setting is not enabled by the workflow. When enabled, publication locks the release assets and associated tag; the title and release notes remain editable. Finish attaching all assets while the release is a draft, and publish corrections as a new version. Do not assume previously published releases become immutable retroactively. Protect release tags and review workflow changes as well: provenance cannot protect against a malicious change authorized through the trusted workflow.
 

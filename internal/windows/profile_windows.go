@@ -3,7 +3,7 @@ package windows
 import (
 	"context"
 
-	"cwg2uploader/internal/app"
+	"cwgrpguploader/internal/app"
 	"github.com/getlantern/systray"
 )
 
@@ -12,8 +12,8 @@ import (
 // Only the separate profiling command references this tray.
 func RunProfileTray(ctx context.Context, cancel context.CancelFunc, updates <-chan app.Status) {
 	systray.Run(func() {
-		systray.SetIcon(trayIcon())
-		systray.SetTooltip("CWG2 profiling: uploads disabled")
+		systray.SetIcon(trayIcon)
+		systray.SetTooltip("CWG RPG profiling: uploads disabled")
 		status := systray.AddMenuItem("Profiling: starting...", "Uploads are disabled")
 		status.Disable()
 		quit := systray.AddMenuItem("Stop profiling", "Exit early; artifacts may be incomplete")
@@ -29,7 +29,7 @@ func RunProfileTray(ctx context.Context, cancel context.CancelFunc, updates <-ch
 					return
 				case update := <-updates:
 					status.SetTitle(display("Profiling: "+update.Message, 90))
-					systray.SetTooltip(tooltip("CWG2 profiling (no uploads): " + update.Message))
+					systray.SetTooltip(tooltip("CWG RPG profiling (no uploads): " + update.Message))
 				}
 			}
 		}()

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/storage"
 )
 
 func (s *runState) handleCommand(ctx context.Context, command Command) error {

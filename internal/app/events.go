@@ -3,8 +3,8 @@ package app
 import (
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/saves"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/saves"
 )
 
 // Events describe observations and delivery transitions, never UI text.

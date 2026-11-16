@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/saves"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/saves"
 )
 
 var errUploaderStopped = errors.New("uploader stopped")

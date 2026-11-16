@@ -9,9 +9,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"cwg2uploader/internal/leaderboard"
-	"cwg2uploader/internal/saves"
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/saves"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestCommandPausePersistsPreference(t *testing.T) {

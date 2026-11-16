@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"cwg2uploader/internal/storage"
+	"cwgrpguploader/internal/storage"
 )
 
 type statusView struct {
@@ -40,7 +40,7 @@ func renderStatus(view statusView, history storage.UploadState) string {
 		parts = append(parts, "Could not persist successful state: "+view.persistenceError.Error())
 	}
 	if len(parts) == 0 {
-		return "Starting; automatic uploads send saves to the public CWG2 leaderboard"
+		return "Starting; automatic uploads send saves to the public CWG RPG leaderboard"
 	}
 	return strings.Join(parts, "; ")
 }
