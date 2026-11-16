@@ -111,6 +111,14 @@ jobs:
         $download = "$env:GITHUB_SERVER_URL/$repository/releases/download/$tag"
         $verification = "$env:GITHUB_SERVER_URL/$repository/blob/$tag/VERIFYING.md"
         @"
+        ## Upload and privacy notice
+
+        **Launching this app enables automatic uploads by default, including existing saves.** Save contents are sent to a [third-party public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard), and submissions may appear publicly.
+
+        The app uploads eligible **.pld files directly inside the selected CWG save folder**, including unknown save categories. **Subfolders are never scanned.** Uploads respect settling and safety limits.
+
+        This app never modifies your game saves. Read the included README before launching.
+
         ## Downloads
         - [Windows installer (tray app)]($download/$installer)
         - [Portable Windows tray app]($download/$tray)

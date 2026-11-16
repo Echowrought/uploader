@@ -20,6 +20,12 @@ picker and build scripts. Ordinary builds need no C compiler.
 tray and console executables with documentation and notices. Failure removes
 partial output. Keep anything you need to preserve outside `dist`.
 
+Pull requests run the same checks on Windows through
+`.github/workflows/checks.yml`, with the release toolchain/environment and a
+read-only token. The required merge-check name is **PR checks (Windows)**; keep
+that job name aligned with the repository's default-branch ruleset. No path
+filters skip checks for documentation-only changes.
+
 The tray build uses the Windows GUI subsystem; the `console` tag selects console
 mode and the console subsystem, providing normal terminal waiting/redirection.
 Both retain Go symbol tables and DWARF debug information. Local builds default
