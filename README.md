@@ -1,6 +1,6 @@
 # CWG RPG Uploader
 
-A Windows 10+ tray app that watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard). It never modifies game saves.
+Watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard). Available for Windows 10+ (tray or console) and Linux x86-64 (console only). It never modifies game saves.
 
 **Automatic uploads are enabled by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. Read the upload notice before the first normal run.
 
@@ -12,11 +12,14 @@ Download a package from [Releases](https://github.com/cwg-rpg-community/uploader
 | --- | --- |
 | Windows installer | Normal tray use, with optional shortcuts and launch at sign-in |
 | Portable tray ZIP | Tray use without installation |
-| Portable console ZIP | Terminal output and troubleshooting |
+| Portable console ZIP | Windows terminal output and troubleshooting |
+| Linux console tar.gz | Linux use without a desktop, tray, or C runtime dependency |
+
+### Windows
 
 The installer offers to launch the app when it finishes; uncheck that option if you are not ready to upload. For portable use, extract the ZIP to a permanent folder and launch `cwg-rpg-uploader.exe`.
 
-Look for the tray icon in the Windows notification area, possibly under the hidden-icons arrow. The app finds your Windows Documents folder, including redirected/OneDrive locations, and watches:
+Look for the tray icon in the Windows notification area, possibly under the hidden-icons arrow. The tray app finds your Windows Documents folder, including redirected/OneDrive locations, and watches:
 
 ```text
 Warcraft III\CustomMapData\CWG2
@@ -26,7 +29,23 @@ Warcraft III\CustomMapData\CWG2
 
 Builds are currently unsigned, so Windows SmartScreen may warn. See [VERIFYING.md](VERIFYING.md) for release verification and [installer/README.md](installer/README.md) for installer options and upgrades. Players do not need Go installed.
 
-## Using the tray
+### Linux
+
+Extract the Linux archive and first inspect your saves without uploading:
+
+```sh
+./cwg-rpg-uploader-console --dry-run --save-folder "/absolute/path/to/Warcraft III/CustomMapData/CWG2"
+```
+
+Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, run without `--dry-run`:
+
+```sh
+./cwg-rpg-uploader-console
+```
+
+Ctrl+C or SIGTERM stops the app and its retries. There is no Linux tray, folder picker, startup registration, or installer, and no systemd dependency. HTTPS uploads need system CA certificates. Only one instance can use the same state directory at a time.
+
+## Using the Windows tray
 
 | Action | Behavior |
 | --- | --- |
@@ -53,7 +72,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Configuration and logs
 
-Application data lives in `%LOCALAPPDATA%\CWGRPGUploader\`, even for portable copies:
+Windows data lives in `%LOCALAPPDATA%\CWGRPGUploader\`, even for portable copies. Linux settings use `${XDG_CONFIG_HOME:-$HOME/.config}/cwg-rpg-uploader/`; history and logs use `${XDG_STATE_HOME:-$HOME/.local/state}/cwg-rpg-uploader/`.
 
 - `config.json`: settings. Restart after manual edits; tray changes apply immediately.
 - `state.json`: successful-upload history. **Deleting it can cause existing saves to be submitted again.**
@@ -63,11 +82,15 @@ The [configuration reference](CONFIGURATION.md) covers settings, disabling autom
 
 ## Console and dry run
 
-To inspect a settled snapshot without uploading:
+Both console builds print the full configuration and log-file paths on startup, including when settings cannot be loaded. They do not prompt or discover a save folder: supply `--save-folder PATH` if `save_folder` is not already configured. The folder is remembered for future runs.
+
+To inspect a settled snapshot without uploading on Windows:
 
 ```powershell
-.\cwg-rpg-uploader-console.exe --dry-run
+.\cwg-rpg-uploader-console.exe --dry-run --save-folder "C:\path\to\CWG2"
 ```
+
+With an existing configured folder, `--dry-run` alone is enough.
 
 Dry run prints the eligible file count and exits once a valid settled snapshot is available. If saves are missing, it keeps waiting; press Ctrl+C to stop. It can create default configuration and logs, but does not upload, record successful-upload history, or acknowledge the normal-run upload notice.
 
@@ -77,18 +100,20 @@ Dry run prints the eligible file count and exits once a valid settled snapshot i
 
 For an installed copy, quit the app and uninstall through Windows Installed apps. For a portable copy, disable **Launch at Windows sign-in**, quit, and delete the executable.
 
-Configuration/history are retained. Optionally delete `%LOCALAPPDATA%\CWGRPGUploader\` to remove local data. This does not remove submissions already held by the leaderboard.
+On Linux, stop the app and delete the executable. Configuration/history are retained on both platforms. Optionally remove the application-data directories above to remove local data. This does not remove submissions already held by the leaderboard.
 
 ## Build and contribute
 
-Requires Windows, Go 1.26 or newer, and Windows PowerShell for the folder picker. Prefer a supported Go toolchain; ordinary builds need no C compiler.
+Requires Go 1.26 or newer; prefer a supported toolchain. Builds need no C compiler. Windows uses Windows PowerShell for the folder picker. The build/check scripts use PowerShell (also available as `pwsh` on Linux).
 
 ```powershell
 .\scripts\check.ps1 # Lint, uncached tests, and vet; each package must finish tests in under 10s
 .\build.ps1         # Run checks and rebuild dist (deletes its previous contents)
 ```
 
-Builds default to version `dev`. Use `build.ps1 -Version vX.Y.Z` to embed a release version; the release workflow supplies its tag automatically.
+`build-linux.ps1` builds `dist-linux/` on Windows or Linux; cross-compilation does not run Linux tests. Native Linux CI runs those tests separately. To build only the console executable with Go, use `CGO_ENABLED=0 go build -o cwg-rpg-uploader-console ./cmd/uploader` on Linux.
+
+Both build scripts default to version `dev`. Use `-Version vX.Y.Z` to embed a release version; the release workflow supplies its tag automatically.
 
 - [Development guide](DOCS.md): builds, tests, release policy, and code organization.
 - [Design](DESIGN.md): synchronization, file selection, and safety contracts.

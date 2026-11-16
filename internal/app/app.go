@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"log"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"cwgrpguploader/internal/leaderboard"
@@ -15,7 +15,8 @@ type Uploader interface {
 }
 
 type App struct {
-	Dir        string
+	Dir        string // Successful-upload history and logs.
+	ConfigDir  string // Empty means settings share Dir, as on Windows.
 	Config     storage.Config
 	LastUpload storage.UploadState
 	Client     Uploader
@@ -57,8 +58,7 @@ func (a *App) Run(ctx context.Context) {
 
 func newRunState(ctx context.Context, a *App) *runState {
 	state := &runState{app: a, logger: componentLogger(a.Logger, "app")}
-	saveFolder, _ := storage.ExpandPath(a.Config.SaveFolder)
-	state.resetPoller(saveFolder)
+	state.resetPoller(filepath.Clean(a.Config.SaveFolder))
 	state.uploader = newSnapshotUploader(ctx, a.Client, a.DryRun, componentLogger(a.Logger, "uploader"))
 	return state
 }
@@ -66,7 +66,7 @@ func newRunState(ctx context.Context, a *App) *runState {
 func (s *runState) resetPoller(saveFolder string) {
 	baseline := ""
 	lastUpload := s.app.LastUpload
-	if !s.app.DryRun && lastUpload.Destination == leaderboard.BaseURL && strings.EqualFold(lastUpload.SaveFolder, saveFolder) {
+	if !s.app.DryRun && lastUpload.Destination == leaderboard.BaseURL && storage.SameFolder(lastUpload.SaveFolder, saveFolder) {
 		baseline = lastUpload.Fingerprint
 	}
 	s.poller = newFolderPoller(saveFolder, baseline, componentLogger(s.app.Logger, "poller"))
@@ -126,7 +126,7 @@ func (s *runState) handleUploadEvent(event uploadEvent) {
 		s.recordUpload(success)
 	}
 	s.view.delivery.observe(event, s.poller.saveFolder)
-	if strings.EqualFold(event.sourceFolder(), s.poller.saveFolder) {
+	if storage.SameFolder(event.sourceFolder(), s.poller.saveFolder) {
 		s.view.commandError = nil
 	}
 	s.refreshStatus()

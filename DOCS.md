@@ -4,9 +4,10 @@ Build, release, and implementation reference for CWG RPG Uploader. User settings
 
 ## Build
 
-Requires Windows and Go 1.26 or newer. Prefer a supported toolchain; the release
-workflow pins its exact Go version. Windows PowerShell is used for the folder
-picker and build scripts. Ordinary builds need no C compiler.
+Requires Windows or Linux and Go 1.26 or newer. Prefer a supported toolchain;
+the release workflow pins its exact Go version. Windows PowerShell is used for
+the Windows folder picker. Build/check scripts use PowerShell (`pwsh` on Linux).
+Ordinary Windows and Linux console builds need no C compiler.
 
 ```powershell
 .\scripts\check.ps1
@@ -20,11 +21,20 @@ picker and build scripts. Ordinary builds need no C compiler.
 tray and console executables with documentation and notices. Failure removes
 partial output. Keep anything you need to preserve outside `dist`.
 
-Pull requests run the same checks on Windows through
+For Linux, `pwsh -File ./build-linux.ps1 -Version v1.2.3` builds `dist-linux/`
+on either host, without executing Linux code on Windows. Run
+`pwsh -File ./scripts/check.ps1` natively on Linux to execute its tests. A bare
+native build is `CGO_ENABLED=0 go build -o cwg-rpg-uploader-console ./cmd/uploader`.
+Linux is always console mode, without GTK/AppIndicator or desktop dependencies.
+
+Pull requests run the same checks natively on Windows and Linux through
 `.github/workflows/checks.yml`, with the release toolchain/environment and a
-read-only token. The required merge-check name is **PR checks (Windows)**; keep
-that job name aligned with the repository's default-branch ruleset. No path
-filters skip checks for documentation-only changes.
+read-only token. Job names are **PR checks (Windows)** and **PR checks (Linux)**;
+keep required check names aligned with the default-branch ruleset. No path
+filters skip checks for documentation-only changes. Linux CLI tests exercise
+isolated child processes with uploads disabled, a loopback-only proxy guard,
+and temporary XDG directories. Process signal/locking tests need real OS time;
+shared coordinator/retry tests retain virtual time.
 
 The tray build uses the Windows GUI subsystem; the `console` tag selects console
 mode and the console subsystem, providing normal terminal waiting/redirection.
@@ -33,7 +43,7 @@ to `dev`; release builds embed the tag through linker `-X` into
 `internal/buildinfo.Version`. Upload requests send `CWGRPGUploader/<version>` as
 the User-Agent. The workflow supplies its tag to both binary builds.
 
-`scripts/notices.ps1` is a build-only helper called by `build.ps1`, not a standalone
+`scripts/notices.ps1` is a build-only helper called by the build scripts, not a standalone
 command. Tests use temporary save fixtures and local HTTP servers, not the real
 leaderboard. See the test-budget and virtual-time details below. A race-detector
 run needs a CGO-capable C compiler; live upload compatibility testing requires
@@ -53,7 +63,8 @@ zeros. Compare X, then Y, then Z numerically (`v1.10.0 > v1.9.9`); the component
 do not promise Semantic Versioning compatibility semantics.
 
 The tag-triggered workflow creates a draft marked **pre-release** by default,
-containing the tray installer, two portable packages, attested build information,
+containing the Windows tray installer, two Windows portable ZIPs, a Linux console
+tar.gz, platform-specific attested build information,
 verification instructions, and generated change notes. Review and download-check
 it before publishing. Publishing retains the pre-release flag; explicitly clear
 it when promoting to stable. Stability comes from GitHub's release flag, not a
@@ -74,10 +85,16 @@ Use one Go module with a small number of packages:
 ```text
 go.mod
 go.sum
-main.go                # Windows entry point
-mode_tray_windows.go   # Default tray mode (without console build tag)
-mode_console_windows.go # Default console mode (console build tag)
-build.ps1              # Test, vet, and build release executables
+cmd/
+  uploader/
+    main.go                 # Shared startup, console loop, and disclosure
+    platform_windows.go     # Windows paths, mutex, messages, and tray wiring
+    platform_linux.go       # Linux console wiring; no GUI dependencies
+    mode_tray_windows.go    # Default Windows tray mode
+    mode_console.go         # Shared Linux/Windows console policy; explicit save path
+  profile/                  # Separate Windows-only diagnostic executable
+build.ps1                   # Test, vet, and build Windows executables
+build-linux.ps1             # Build/package Linux console, including cross-builds
 README.md
 CONFIGURATION.md
 DESIGN.md
@@ -86,6 +103,9 @@ scripts/
   notices.ps1          # Generate dependency license notices
 
 internal/
+  linux/
+    platform_linux.go  # XDG config/state paths and per-state-directory flock
+
   buildinfo/
     version.go         # Linker-injected release tag; defaults to dev
 
@@ -123,7 +143,7 @@ Tests live alongside implementations as `*_test.go`. Place sample saves in the r
 
 ## Responsibilities
 
-- **`main.go`:** wire dependencies and start the application; keep application logic elsewhere. The `console` build tag selects console mode by default; without it the executable defaults to tray mode. `--dry-run` requests local inspection in either build; there is no `--console` flag. Present the upload disclosure before starting the coordinator, recording `Config.UploadNoticeShown` only after a normal-run presentation and config save succeed. Dry runs leave it pending. Listen for both interrupt and Windows SIGTERM notifications, then cancel and drain the coordinator before closing resources; Windows close/logoff/shutdown cleanup remains subject to OS deadlines.
+- **`cmd/uploader/main.go`:** wire dependencies and start the application; keep application logic elsewhere. The `console` build tag selects console mode by default; without it the Windows executable defaults to tray mode. Linux always uses console mode. `--save-folder` validates and remembers an explicitly selected path; Both console builds require one when configuration has no save folder, without prompting or discovery, and print full settings/log-file paths before loading configuration. `--dry-run` requests local inspection in either build; there is no `--console` flag. Present the upload disclosure before starting the coordinator, recording `Config.UploadNoticeShown` only after a normal-run presentation and config save succeed. Dry runs leave it pending. Listen for both interrupt and Windows SIGTERM notifications, then cancel and drain the coordinator before closing resources; Windows close/logoff/shutdown cleanup remains subject to OS deadlines.
 - **`app`:** own the synchronization workflow, lifecycle, and retry scheduling. Permit only one upload at a time.
 - **`saves`:** observe every eligible file's candidate contents, cache last-settled versions, require a settled version for every essential filename, prioritize essentials within bounded cache/snapshot budgets, and fingerprint the selected settled versions. All non-private `.pld` categories are eligible, including account verification. No HTTP or tray dependencies.
 - **`leaderboard`:** implement the upload protocol and classify errors. Do not read local files or retry indefinitely; scheduling belongs to `app`.
@@ -179,9 +199,9 @@ Folder observations return directly to the coordinator. The uploader has exactly
 
 Operational logging is independent of UI rendering. Components use `[poller]`, `[uploader]`, and `[app]` logger names. Per-work coordinator and uploader messages include `work_id=N` context; retries retain the same session-local ID, while each newly accepted emission gets a new ID. Child loggers route writes through the shared base logger, preserving serialization even when the underlying writer is not concurrency-safe. Rendering/status delivery does not duplicate those logs.
 
-Configuration loading and saving both call `Config.Validate`, including on first-run defaults. `LoadConfig` takes a default-folder resolver and invokes it only for absent configuration or an omitted save-folder setting, never for a complete override or an explicitly invalid folder. Validation checks polling bounds and that the expanded save folder is absolute, while preserving environment-variable references in stored settings. Command handlers edit a local config copy, validate and save it, and only then replace `App.Config`; invalid candidates or failed writes never reach the live config. No per-field property setters are needed.
+Configuration loading and saving both call `Config.Validate`, including on first-run defaults. `LoadConfig` takes a default-folder resolver and invokes it only for absent configuration or an omitted save-folder setting, never for a complete override or an explicitly invalid folder. Validation checks polling bounds and that the literal save folder is absolute. The app does not expand environment variables or `~` in paths; shells may expand CLI arguments before passing them to the app. Command handlers edit a local config copy, validate and save it, and only then replace `App.Config`; invalid candidates or failed writes never reach the live config. No per-field property setters are needed.
 
-Choosing another save folder writes configuration, replaces the poller, and clears selected-folder rejection/preview feedback. Pending and active/backoff work remain represented because accepted delivery continues. Later terminal feedback is shown only when its source folder matches the current expanded selection, using Windows case-insensitive comparison; old-folder successes are always recorded and persisted as history. Old-folder events do not clear current command errors. A failed config write leaves existing polling, presentation, and delivery unchanged. The uploader is neither reset nor notified about the selection: active and pending jobs continue, backoff remains in force, and new snapshots replace pending data through the existing coalescing policy. Source-folder identity travels with each immutable snapshot and its completion event, so an old job never gets recorded as originating from the newly selected folder.
+Choosing another save folder writes configuration, replaces the poller, and clears selected-folder rejection/preview feedback. Pending and active/backoff work remain represented because accepted delivery continues. Later terminal feedback is shown only when its source folder matches the current normalized selection, using Windows case-insensitive or Linux case-sensitive comparison; old-folder successes are always recorded and persisted as history. Old-folder events do not clear current command errors. A failed config write leaves existing polling, presentation, and delivery unchanged. The uploader is neither reset nor notified about the selection: active and pending jobs continue, backoff remains in force, and new snapshots replace pending data through the existing coalescing policy. Source-folder identity travels with each immutable snapshot and its completion event, so an old job never gets recorded as originating from the newly selected folder.
 
 Shutdown cancels the uploader's HTTP call or retry wait and drains lifecycle events through channel closure before waiting for the single worker. The worker cannot exit before its synchronous HTTP call returns, so no private result channel or worker `WaitGroup` is needed. A request that actually succeeded is still reported and persisted during shutdown. New queue calls fail once stopping begins.
 
@@ -189,7 +209,7 @@ The tray sends commands such as toggling Automatic uploads and Upload now to the
 
 The tray owns a generic `subprocessJob`: a non-inheritable, kill-on-close Job Object for children that must not outlive the uploader. Native process creation uses `PROC_THREAD_ATTRIBUTE_JOB_LIST` to assign membership atomically on Windows 10+, with an explicit inherited-handle list limited to child standard I/O. Closing the tray closes its job; forced uploader termination also closes the last job handle and kills owned children. A short mutex protects process creation against concurrent job closure, but is not held while waiting for a child. Output is drained concurrently with a caller-supplied process wait/timeout. The folder picker is currently the only consumer; its PowerShell script, five-minute timeout, and BOM-only path decoding belong to `folders_windows.go`. Whitespace in selected paths is preserved. Browsers and editors opened with `ShellExecute` are independent and are not placed in the job. Tooltips fit within 127 UTF-16 units plus the Windows terminator, while menu-title limits remain rune-based.
 
-Keep core save scanning and HTTP behavior independent of Windows UI code so they can be tested without launching the tray. Windows-specific files use `_windows.go` filenames; `main.go` has a Windows build constraint. Run whole-project tests on Windows.
+Keep core save scanning and HTTP behavior independent of Windows UI code so they can be tested without launching the tray. `cmd/uploader/main.go` provides shared startup; platform-specific files use `_windows.go` or `_linux.go` filenames. Run `scripts/check.ps1` natively on both Windows and Linux. Cross-compilation checks the target build but does not execute its tests.
 
 ## Implementation Style
 
@@ -197,10 +217,10 @@ Keep core save scanning and HTTP behavior independent of Windows UI code so they
 - Introduce narrow interfaces where they provide a concrete testing boundary, such as substituting a fake upload client.
 - Put each file's main workflow first, followed by its direct helpers and lower-level utilities.
 - Keep this small structure and split packages only when real complexity justifies it.
-- The module currently requires Go 1.26+. Use stable `testing/synctest` for virtual-time tests. Run shared tests with `go test ./...` and `go vet ./...`, then check the console entry point with `go test -tags=console .` and `go vet -tags=console .`; additionally use `go test -race ./internal/app` when a CGO-capable C compiler is installed. Ordinary Windows builds do not require that compiler.
+- The module currently requires Go 1.26+. Use stable `testing/synctest` for virtual-time tests. Run shared tests with `go test ./...` and `go vet ./...`, then check the console entry point with `go test -tags=console ./cmd/uploader` and `go vet -tags=console ./cmd/uploader` on Windows; additionally use `go test -race ./internal/app` when a CGO-capable C compiler is installed. Ordinary Windows builds do not require that compiler.
 - The upload-client interface is the network test seam. Public uploader tests use queue calls and lifecycle events to cover concurrent callers, queueing under event backpressure, latest-pending coalescing, retry timers under virtual time, cancellation, and reliable success events during shutdown. Pure retry-policy tests cover classification, jitter ranges, the backoff cap, and Retry-After. Lifecycle tests cover superseded rejection events without depending on internal state objects. Application tests cover persistence, polling during uploads, config-write failures, folder changes during active delivery, origin metadata, retained backoff across source changes, and explicit uploads with Automatic uploads off. Renderer tests cover composed detection, delivery, history, and errors. Sequence tests cover pending new-folder work during old-folder backoff, delayed lifecycle events for identical emissions, and pausing or settling after success.
 
-`scripts/check.ps1` runs tests through `scripts/go-tests.ps1` with `go test -json -count=1`. Every package must report less than 10 seconds of execution, independently for shared and console-entry runs. Compilation, dependency downloads, lint, and vet do not enter this budget. Never sum test durations: parallel tests and nested reports overlap. Budget failures list the five slowest top-level tests in the affected package. `scripts/test-go-tests.ps1` validates the reporter with canned events in the same PowerShell process, without long sleeps or subprocess launches. The release build invokes these checks too; raw `go test` alone does not enforce the budget.
+`scripts/check.ps1` runs tests through `scripts/go-tests.ps1` with `go test -json -count=1 -p 1`. Packages run sequentially to avoid fixture filesystem contention and excessive concurrent test-process memory; tests within a package may still run in parallel. Every package must report less than 10 seconds of execution, independently for shared and console-entry runs. Compilation, dependency downloads, lint, and vet do not enter this budget. Never sum test durations: parallel tests and nested reports overlap. Budget failures list the five slowest top-level tests in the affected package. `scripts/test-go-tests.ps1` validates the reporter with canned events in the same PowerShell process, without long sleeps or subprocess launches. The release build invokes these checks too; raw `go test` alone does not enforce the budget.
 
 Timer-heavy app tests run their fixtures, goroutines, channels, contexts, and assertions inside `synctest.Test` bubbles. Keep `t.Parallel()` outside the bubble and register cleanup on its inner `*testing.T`. Virtual time changes only tests, not business-code clocks or durations. Exact-boundary retry tests verify no completion one nanosecond before the deadline and completion at it. Real filesystem and subprocess tests remain outside bubbles; pure scanner tests continue supplying observation timestamps directly.
 

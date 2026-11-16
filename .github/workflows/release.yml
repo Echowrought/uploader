@@ -6,7 +6,84 @@ on:
 permissions:
   contents: read
 jobs:
+  linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      GOAMD64: v1
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+      GOFLAGS: ''
+      GOEXPERIMENT: ''
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      with:
+        go-version: '1.27.3'
+    - name: Test and build Linux console
+      run: |
+        if ($env:GITHUB_REF_NAME -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+          throw 'Release tags must use vX.Y.Z: non-negative integers without leading zeros'
+        }
+        if (git status --porcelain) { throw 'Release builds require a clean checkout' }
+        ./scripts/check.ps1
+        ./build-linux.ps1 -Version $env:GITHUB_REF_NAME
+    - name: Record Linux build information
+      run: |
+        $goEnvironment = go env -json GOVERSION GOOS GOARCH GOAMD64 CGO_ENABLED GOTOOLCHAIN GOFLAGS GOEXPERIMENT
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read Go build settings' }
+        $actions = @(Select-String -Path .github/workflows/release.yml -Pattern '^\s*(?:-\s*)?uses:\s*(\S+)' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value })
+        [ordered]@{
+          repository = $env:GITHUB_REPOSITORY
+          source_ref = $env:GITHUB_REF
+          source_commit = $env:GITHUB_SHA
+          workflow = $env:GITHUB_WORKFLOW_REF
+          workflow_commit = $env:GITHUB_WORKFLOW_SHA
+          run_url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/attempts/$env:GITHUB_RUN_ATTEMPT"
+          runner_os = $env:RUNNER_OS
+          runner_arch = $env:RUNNER_ARCH
+          runner_image = $env:ImageOS
+          runner_image_version = $env:ImageVersion
+          powershell_version = $PSVersionTable.PSVersion.ToString()
+          go = ($goEnvironment | ConvertFrom-Json)
+          actions = $actions
+          executables = @([ordered]@{
+            name = 'cwg-rpg-uploader-console'
+            sha256 = (Get-FileHash ./dist-linux/cwg-rpg-uploader-console -Algorithm SHA256).Hash.ToLowerInvariant()
+          })
+        } | ConvertTo-Json -Depth 5 | Set-Content linux-build-info.json -Encoding utf8
+    - name: Package Linux console
+      run: |
+        tar -czf "cwg-rpg-uploader-console-$env:GITHUB_REF_NAME-linux-amd64.tar.gz" -C dist-linux .
+        if ($LASTEXITCODE -ne 0) { throw 'Linux packaging failed' }
+    - name: Attest Linux release files
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-path: |
+          cwg-rpg-uploader-console-*-linux-amd64.tar.gz
+          linux-build-info.json
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: linux-release-files
+        path: |
+          cwg-rpg-uploader-console-*-linux-amd64.tar.gz
+          linux-build-info.json
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 1
   release:
+    needs: linux
     runs-on: windows-latest
     permissions:
       contents: write
@@ -99,6 +176,10 @@ jobs:
           cwg-rpg-uploader-*.zip
           dist/cwg-rpg-uploader-*-setup.exe
           build-info.json
+    - name: Download Linux release files
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: linux-release-files
     - name: Create draft release
       env:
         GH_TOKEN: ${{ github.token }}
@@ -107,6 +188,7 @@ jobs:
         $tray = "cwg-rpg-uploader-$tag-windows-amd64.zip"
         $console = "cwg-rpg-uploader-console-$tag-windows-amd64.zip"
         $installer = "cwg-rpg-uploader-$tag-windows-amd64-setup.exe"
+        $linux = "cwg-rpg-uploader-console-$tag-linux-amd64.tar.gz"
         $repository = $env:GITHUB_REPOSITORY
         $download = "$env:GITHUB_SERVER_URL/$repository/releases/download/$tag"
         $verification = "$env:GITHUB_SERVER_URL/$repository/blob/$tag/VERIFYING.md"
@@ -123,17 +205,20 @@ jobs:
         - [Windows installer (tray app)]($download/$installer)
         - [Portable Windows tray app]($download/$tray)
         - [Portable Windows console app]($download/$console)
+        - [Linux console app (x86-64)]($download/$linux)
 
         Setup installs for the current user without administrator rights and offers shortcut and sign-in startup choices. Upgrades use Windows Restart Manager to request graceful closure of the installed app. The final launch option is checked by default; uncheck it to leave the app stopped. Silent setup never launches it. Configuration/history are retained on upgrades and uninstall.
 
         For portable use, extract the ZIP and launch the executable. Starting either app enables automatic save uploads by default; read the included README first. Executables and setup are unsigned, so Windows SmartScreen may display a warning.
+
+        Linux is console-only: extract the archive, then start with --dry-run --save-folder followed by the absolute Wine/Proton CWG save-folder path to inspect saves without uploading. Omit --dry-run only when ready for real uploads. No tray, installer, Wine-prefix discovery, or automatic startup is provided on Linux.
 
         ## Verify this release
         This section is for geeks. Or those who really want to check where their download came from.
 
         Follow the [verification instructions]($verification) to check this release's attestations, or rebuild [this tag]($env:GITHUB_SERVER_URL/$repository/tree/$tag) yourself and compare executable hashes. No team access is needed.
         "@ | Set-Content release-notes.md -Encoding utf8
-        gh release create "$tag" "$tray" "$console" "./dist/$installer" build-info.json `
+        gh release create "$tag" "$tray" "$console" "./dist/$installer" "$linux" build-info.json linux-build-info.json `
           --verify-tag `
           --draft `
           --prerelease `

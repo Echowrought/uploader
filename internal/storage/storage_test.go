@@ -43,7 +43,6 @@ func TestConfigPersistsUserSettings(t *testing.T) {
 
 func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
 	folder := t.TempDir()
-	t.Setenv("CWG_RPG_CONFIG_TEST_RELATIVE", "relative")
 	cases := []struct {
 		name   string
 		config Config
@@ -53,7 +52,6 @@ func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
 		{"excessive interval", Config{SaveFolder: folder, PollSeconds: 3601}},
 		{"empty folder", Config{PollSeconds: 5}},
 		{"relative folder", Config{SaveFolder: "relative", PollSeconds: 5}},
-		{"relative environment path", Config{SaveFolder: "%CWG_RPG_CONFIG_TEST_RELATIVE%", PollSeconds: 5}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,10 +151,14 @@ func TestLoadConfigRejectsInvalidDefaultsWithoutWritingThem(t *testing.T) {
 	}
 }
 
-func TestConfigPreservesEnvironmentPaths(t *testing.T) {
+func TestConfigTreatsPathCharactersLiterally(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CWG_RPG_CONFIG_TEST_HOME", t.TempDir())
-	want := Config{SaveFolder: "%CWG_RPG_CONFIG_TEST_HOME%", PollSeconds: 5, Automatic: true}
+	t.Setenv("CWG_RPG_LITERAL_PATH", "")
+	if err := os.Unsetenv("CWG_RPG_LITERAL_PATH"); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(t.TempDir(), "%CWG_RPG_LITERAL_PATH% $CWG_RPG_LITERAL_PATH ${CWG_RPG_LITERAL_PATH} ~")
+	want := Config{SaveFolder: folder, PollSeconds: 5, Automatic: true}
 
 	saveErr := SaveConfig(dir, want)
 	got, _, loadErr := LoadConfig(dir, configDefault("unused"))
@@ -165,7 +167,7 @@ func TestConfigPreservesEnvironmentPaths(t *testing.T) {
 		t.Fatalf("errors: %v, %v", saveErr, loadErr)
 	}
 	if got != want {
-		t.Fatalf("environment path was replaced: %+v", got)
+		t.Fatalf("literal path was changed: %+v", got)
 	}
 }
 
@@ -190,20 +192,6 @@ func TestConfigIgnoresLegacyStartupPreference(t *testing.T) {
 	}
 	if firstRun || got != want {
 		t.Fatalf("legacy config was not loaded: %+v", got)
-	}
-}
-
-func TestExpandPathExpandsWindowsVariables(t *testing.T) {
-	folder := t.TempDir()
-	t.Setenv("CWG_RPG_TEST_HOME", folder)
-
-	got, err := ExpandPath(`%CWG_RPG_TEST_HOME%\saves`)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Join(folder, "saves") {
-		t.Fatalf("got %q", got)
 	}
 }
 

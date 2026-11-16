@@ -79,7 +79,7 @@ func renderDelivery(view deliveryView, saveFolder string) []string {
 }
 
 func sourceSuffix(source, selected string) string {
-	if strings.EqualFold(source, selected) {
+	if storage.SameFolder(source, selected) {
 		return ""
 	}
 	return " (previous folder)"

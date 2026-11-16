@@ -1,6 +1,6 @@
 package app
 
-import "strings"
+import "cwgrpguploader/internal/storage"
 
 // deliveryView projects accepted work and worker transitions, not scheduling.
 // Pending acceptance is recorded synchronously: worker events may be delayed by
@@ -40,7 +40,7 @@ func (v *deliveryView) observe(event uploadEvent, saveFolder string) {
 	// Activity is global because accepted old-folder work still occupies the
 	// worker. Terminal feedback belongs only to the selected folder and must
 	// not describe a newer pending emission as rejected or previewed.
-	if !strings.EqualFold(event.sourceFolder(), saveFolder) || (v.pending != nil && v.pending.id > event.workID()) {
+	if !storage.SameFolder(event.sourceFolder(), saveFolder) || (v.pending != nil && v.pending.id > event.workID()) {
 		return
 	}
 	switch event := event.(type) {

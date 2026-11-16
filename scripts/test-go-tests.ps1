@@ -29,7 +29,7 @@ function Test-GoTestReporting {
             )
         },
         @{
-            Name = 'Console entry point is checked'; BuildArguments = @('-tags=console', '.'); Fails = $true; Contains = 'example/console'
+            Name = 'Console entry point is checked'; BuildArguments = @('-tags=console', './cmd/uploader'); Fails = $true; Contains = 'example/console'
             Report = @(@{ Action = 'pass'; Package = 'example/console'; Elapsed = 11 })
         },
         @{

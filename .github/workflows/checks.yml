@@ -8,11 +8,21 @@ concurrency:
   cancel-in-progress: true
 jobs:
   tests:
-    name: PR checks (Windows)
-    runs-on: windows-latest
+    name: PR checks (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Windows
+          runner: windows-latest
+          platform: windows
+        - name: Linux
+          runner: ubuntu-latest
+          platform: linux
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
-      GOOS: windows
+      GOOS: ${{ matrix.platform }}
       GOARCH: amd64
       GOAMD64: v1
       CGO_ENABLED: '0'
@@ -31,3 +41,6 @@ jobs:
         go-version: '1.27.3'
     - name: Lint, test, and vet
       run: ./scripts/check.ps1
+    - name: Build Linux console package
+      if: matrix.platform == 'linux'
+      run: ./build-linux.ps1

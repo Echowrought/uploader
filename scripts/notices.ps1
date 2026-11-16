@@ -1,10 +1,12 @@
+param([string]$OutputPath = (Join-Path $PSScriptRoot '..\THIRD_PARTY_NOTICES.md'))
+
 $ErrorActionPreference = 'Stop'
 # Build-only helper: build.ps1 supplies the repository working directory.
 # Go emits UTF-8 paths; Windows PowerShell otherwise may decode them as OEM text.
 $previousEncoding = [Console]::OutputEncoding
 try {
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-    $lines = go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Dir}}{{end}}' .
+    $lines = go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Dir}}{{end}}' ./cmd/uploader
     if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate dependencies' }
     $root = go env GOROOT
     if ($LASTEXITCODE -ne 0) { throw 'Could not locate Go license' }
@@ -12,7 +14,7 @@ try {
     [Console]::OutputEncoding = $previousEncoding
 }
 $sections = [System.Collections.Generic.List[string]]::new()
-$sections.Add("# Third-party notices`n`nGenerated from the Windows build dependencies. Includes the Go runtime license.")
+$sections.Add("# Third-party notices`n`nGenerated from the target build dependencies. Includes the Go runtime license.")
 $sections.Add("## Go runtime and standard library`n`n" + '```text' + "`n" + [IO.File]::ReadAllText((Join-Path $root 'LICENSE')) + "`n" + '```')
 foreach ($line in ($lines | Where-Object { $_ -and ($_ -notlike 'cwgrpguploader|*') } | Sort-Object -Unique)) {
     $parts = $line -split '\|', 2
@@ -23,4 +25,4 @@ foreach ($line in ($lines | Where-Object { $_ -and ($_ -notlike 'cwgrpguploader|
         $sections.Add("### $($file.Name)`n`n" + '```text' + "`n" + [IO.File]::ReadAllText($file.FullName) + "`n" + '```')
     }
 }
-[IO.File]::WriteAllText((Join-Path $PSScriptRoot '..\THIRD_PARTY_NOTICES.md'), ($sections -join "`n`n"), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($OutputPath, ($sections -join "`n`n"), [Text.UTF8Encoding]::new($false))

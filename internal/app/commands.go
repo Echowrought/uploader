@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"cwgrpguploader/internal/storage"
@@ -39,22 +40,22 @@ func (s *runState) toggleAutomatic() error {
 }
 
 func (s *runState) changeFolder(path string) error {
-	expanded, err := storage.ExpandPath(path)
-	if err != nil {
-		return err
-	}
 	config := s.app.Config
-	config.SaveFolder = expanded
+	config.SaveFolder = filepath.Clean(path)
 	if err := s.saveConfig(config); err != nil {
 		return err
 	}
-	s.resetPoller(expanded)
-	s.logger.Printf("save folder set to %q", expanded)
+	s.resetPoller(config.SaveFolder)
+	s.logger.Printf("save folder set to %q", config.SaveFolder)
 	return nil
 }
 
 func (s *runState) saveConfig(config storage.Config) error {
-	if err := storage.SaveConfig(s.app.Dir, config); err != nil {
+	dir := s.app.ConfigDir
+	if dir == "" {
+		dir = s.app.Dir
+	}
+	if err := storage.SaveConfig(dir, config); err != nil {
 		return fmt.Errorf("Save config: %w", err)
 	}
 	s.app.Config = config

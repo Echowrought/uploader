@@ -10,8 +10,8 @@ Run commands from the repository root:
 
 | Target | Meaning |
 | --- | --- |
-| `go build .` | Normal tray application; can upload. Not the profiler. |
-| `go build -tags=console .` | Normal console application; can upload unless `--dry-run` is supplied. Not the profiler. |
+| `go build ./cmd/uploader` | Normal tray application; can upload. Not the profiler. |
+| `go build -tags=console ./cmd/uploader` | Normal console application; can upload unless `--dry-run` is supplied. Not the profiler. |
 | `./cmd/profile` | Separate profiling command; uploads are always disabled. |
 
 Build the profiler with the helper:
