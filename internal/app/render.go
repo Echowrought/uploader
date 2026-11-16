@@ -45,6 +45,20 @@ func renderStatus(view statusView, history storage.UploadState) string {
 	return strings.Join(parts, "; ")
 }
 
+// renderActivity projects the existing view into independent UI sections.
+// The combined message remains available to console/profiling consumers.
+func renderActivity(view statusView) (detection, upload string) {
+	detection = renderDetection(view.folder)
+	if view.folder.kind == pollUpdated {
+		detection = "Saves ready"
+	}
+	parts := renderDelivery(view.delivery, view.saveFolder)
+	if preview := view.delivery.preview; preview != nil {
+		parts = append([]string{fmt.Sprintf("Dry run: %d eligible files; no upload or successful state written", preview.fileCount)}, parts...)
+	}
+	return detection, strings.Join(parts, "; ")
+}
+
 func renderDetection(event pollEvent) string {
 	switch event.kind {
 	case pollDisabled:
@@ -67,7 +81,11 @@ func renderDelivery(view deliveryView, saveFolder string) []string {
 		suffix := sourceSuffix(view.active.sourceFolder(), saveFolder)
 		switch event := view.active.(type) {
 		case uploadStarted:
-			parts = append(parts, "Uploading saves"+suffix)
+			message := "Uploading saves"
+			if event.retry {
+				message = "Retrying saves"
+			}
+			parts = append(parts, message+suffix)
 		case uploadRetryScheduled:
 			parts = append(parts, "Retry at "+event.retryAt.Format("15:04:05")+suffix)
 		}

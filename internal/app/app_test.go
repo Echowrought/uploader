@@ -41,7 +41,7 @@ func TestAppPersistsSuccessfulSnapshot(t *testing.T) {
 		if state.Fingerprint != snapshot.Fingerprint || state.Heroes != 1 || state.Player != "Player" {
 			t.Fatalf("incorrect persisted state: %+v", state)
 		}
-		if status.LastUpload.IsZero() {
+		if status.History.UploadedAt.IsZero() {
 			t.Fatal("successful upload time not exposed")
 		}
 	})
@@ -337,6 +337,9 @@ func TestCoordinatorReportsUploadStatePersistenceFailure(t *testing.T) {
 	}
 	if !strings.Contains(status.Message, "Could not persist successful state") || !strings.Contains(logs.String(), "[app] save upload state failed:") {
 		t.Fatal("persistence failure was not rendered and logged")
+	}
+	if !strings.Contains(status.Menu(time.Now()).History.Title, "history not saved") || status.History.Fingerprint != "delivered" {
+		t.Fatal("published history did not distinguish confirmed delivery from persistence failure")
 	}
 }
 

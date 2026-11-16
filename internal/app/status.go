@@ -7,14 +7,22 @@ import (
 )
 
 type Status struct {
-	Message    string
-	LastUpload time.Time
-	Config     storage.Config
+	Message           string
+	Detection         string
+	DetectionSince    time.Time
+	DetectionWarnings int
+	Upload            string
+	History           storage.UploadState
+	HistoryError      string
+	Config            storage.Config
 }
 
 type Command struct {
 	Kind  string
 	Value string
+	// Optional one-shot result. Callers supply a fresh channel buffered to one
+	// so a slow UI cannot block scanning or delivery. Nil means no reply needed.
+	Result chan<- error
 }
 
 func (s *runState) refreshStatus() {
@@ -28,7 +36,16 @@ func (s *runState) reportCommandError(err error) {
 }
 
 func (s *runState) publish(message string) {
-	status := Status{Message: message, Config: s.app.Config, LastUpload: s.app.LastUpload.UploadedAt}
+	detection, upload := renderActivity(s.view)
+	status := Status{
+		Message: message, Detection: detection, Upload: upload,
+		Config: s.app.Config, History: s.app.LastUpload,
+		DetectionSince:    s.view.folder.unchangedSince,
+		DetectionWarnings: len(s.view.folder.warnings),
+	}
+	if s.view.persistenceError != nil {
+		status.HistoryError = s.view.persistenceError.Error()
+	}
 	select {
 	case s.app.Updates <- status:
 	default:

@@ -49,8 +49,15 @@ func (a *App) Run(ctx context.Context) {
 			}
 			state.handleUploadEvent(event)
 		case command := <-a.Commands:
-			if err := state.handleCommand(ctx, command); err != nil {
+			err := state.handleCommand(ctx, command)
+			if err != nil {
 				state.reportCommandError(err)
+			}
+			if command.Result != nil {
+				select {
+				case command.Result <- err:
+				case <-ctx.Done():
+				}
 			}
 		}
 	}

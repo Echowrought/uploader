@@ -16,6 +16,7 @@ type folderPoller struct {
 	scanner                *saves.Scanner
 	logger                 *log.Logger
 	lastEmittedFingerprint string
+	unchangedSince         time.Time
 	forceNextEmission      bool
 	lastError              string
 	lastWarning            string
@@ -26,6 +27,7 @@ func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) 
 		return pollEvent{kind: pollCancelled, err: err}
 	}
 	if !automatic && !p.forceNextEmission {
+		p.unchangedSince = time.Time{}
 		return pollEvent{kind: pollDisabled}
 	}
 	snapshot, err := p.scanner.Scan(ctx, now)
@@ -33,9 +35,11 @@ func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) 
 		return pollEvent{kind: pollCancelled, err: err}
 	}
 	if errors.Is(err, saves.ErrSettling) {
+		p.unchangedSince = time.Time{}
 		return pollEvent{kind: pollSettling, err: err}
 	}
 	if err != nil {
+		p.unchangedSince = time.Time{}
 		if err.Error() != p.lastError {
 			p.logger.Printf("save scan failed: %v", err)
 			p.lastError = err.Error()
@@ -48,8 +52,13 @@ func (p *folderPoller) poll(ctx context.Context, now time.Time, automatic bool) 
 		p.logger.Printf("save warnings: %s", warning)
 	}
 	p.lastWarning = warning
+	// This is an observation time, not a filesystem mtime or upload time.
+	// A loaded delivery baseline cannot establish observations before startup.
+	if p.unchangedSince.IsZero() || snapshot.Fingerprint != p.lastEmittedFingerprint {
+		p.unchangedSince = now
+	}
 	if snapshot.Fingerprint == p.lastEmittedFingerprint && !p.forceNextEmission {
-		return pollEvent{kind: pollStable, warnings: snapshot.Warnings}
+		return pollEvent{kind: pollStable, warnings: snapshot.Warnings, unchangedSince: p.unchangedSince}
 	}
 	if err := ctx.Err(); err != nil {
 		return pollEvent{kind: pollCancelled, err: err}

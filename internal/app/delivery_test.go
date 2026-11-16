@@ -29,13 +29,18 @@ func TestPendingNewFolderRemainsVisibleDuringOldFolderBackoff(t *testing.T) {
 	now := time.Now()
 	state.tick(ctx, now.Add(6*time.Second))
 	state.tick(ctx, now.Add(7*time.Second))
-	message := publishedStatus(t, application).Message
+	status := publishedStatus(t, application)
+	message := status.Message
+	menu := status.Menu(time.Now())
 
 	if commandErr != nil {
 		t.Fatal(commandErr)
 	}
 	if !strings.Contains(message, "No new changes; Pending upload; Retry at ") || !strings.Contains(message, "(previous folder)") {
 		t.Fatalf("accepted new-folder work disappeared during backoff: %s", message)
+	}
+	if !strings.Contains(menu.Upload.Title, "Pending upload") || !strings.Contains(menu.Upload.Title, "Retry at") || !strings.Contains(menu.Upload.Details, "previous folder") {
+		t.Fatalf("separate upload row lost accepted work or backoff: %+v", menu.Upload)
 	}
 	if len(client.requests) != 0 {
 		t.Fatal("new-folder work bypassed the old request's backoff")

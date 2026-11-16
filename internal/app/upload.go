@@ -38,6 +38,9 @@ func (u *snapshotUploader) run(ctx context.Context, output chan<- uploadEvent, c
 		if update == nil {
 			return
 		}
+		// Only selecting the failed fallback retries this snapshot. A newer
+		// queued snapshot shares backoff, but is making its own first attempt.
+		retrying := update == failed
 		failed = nil
 		workLogger := prefixedLogger(logger, fmt.Sprintf("work_id=%d ", update.id))
 		if dryRun {
@@ -45,7 +48,7 @@ func (u *snapshotUploader) run(ctx context.Context, output chan<- uploadEvent, c
 			output <- uploadPreviewed{id: update.id, saveFolder: update.saveFolder, fileCount: len(update.snapshot.Files)}
 			continue
 		}
-		output <- uploadStarted{id: update.id, saveFolder: update.saveFolder}
+		output <- uploadStarted{id: update.id, saveFolder: update.saveFolder, retry: retrying}
 		if ctx.Err() != nil {
 			return
 		}
