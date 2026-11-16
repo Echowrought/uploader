@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -10,19 +8,27 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"cwgrpguploader/internal/app"
 	"cwgrpguploader/internal/leaderboard"
 	"cwgrpguploader/internal/storage"
-	ui "cwgrpguploader/internal/windows"
 )
 
 func main() {
 	dryRun := flag.Bool("dry-run", false, "inspect one stable snapshot without uploading; use the console binary for terminal output")
+	var saveFolder string
+	flag.Func("save-folder", "absolute CWG save folder to use and remember (required for unconfigured console builds)", func(value string) error {
+		if !filepath.IsAbs(value) {
+			return fmt.Errorf("save-folder must be an absolute path")
+		}
+		saveFolder = value
+		return nil
+	})
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--dry-run]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--dry-run] [--save-folder PATH]\n", os.Args[0])
 		if consoleBuild {
 			fmt.Fprintln(flag.CommandLine.Output(), "Console build: normal runs upload according to configuration, without the tray.")
 		} else {
@@ -31,37 +37,57 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "Unexpected positional arguments; use --save-folder PATH")
+		os.Exit(2)
+	}
 	console := consoleBuild || *dryRun
-	if err := run(console, *dryRun); err != nil {
+	if err := run(console, *dryRun, saveFolder); err != nil {
 		if console {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			ui.Message("CWG RPG Uploader", err.Error())
+			showMessage("CWG RPG Uploader", err.Error())
 		}
 		os.Exit(1)
 	}
 }
 
-func run(console, dryRun bool) error {
-	release, err := ui.SingleInstance()
+func run(console, dryRun bool, saveFolder string) error {
+	configDir, stateDir, err := dataFolders()
+	if err != nil {
+		return err
+	}
+	if console {
+		if _, err := fmt.Fprintf(os.Stdout, "Configuration: %s\nLogs: %s\n", filepath.Join(configDir, "config.json"), filepath.Join(stateDir, "uploader.log")); err != nil {
+			return err
+		}
+	}
+	release, err := singleInstance(stateDir)
 	if err != nil {
 		return err
 	}
 	defer release()
-	dir, err := ui.DataFolder()
+	config, _, err := storage.LoadConfig(configDir, func() (string, error) {
+		if saveFolder != "" {
+			return saveFolder, nil
+		}
+		return defaultSaveFolder()
+	})
 	if err != nil {
 		return err
 	}
-	config, _, err := storage.LoadConfig(dir, ui.DefaultSaveFolder)
-	if err != nil {
-		return err
+	if saveFolder != "" {
+		config.SaveFolder = saveFolder
+		if err := storage.SaveConfig(configDir, config); err != nil {
+			return err
+		}
 	}
 	httpClient, err := leaderboard.NewHTTPClient(config.ProxyURL)
 	if err != nil {
 		return err
 	}
 	defer httpClient.CloseIdleConnections()
-	writer, err := storage.OpenLog(dir)
+	writer, err := storage.OpenLog(stateDir)
 	if err != nil {
 		return err
 	}
@@ -71,7 +97,7 @@ func run(console, dryRun bool) error {
 		output = io.MultiWriter(writer, os.Stdout)
 	}
 	logger := log.New(output, "", log.Ldate|log.Ltime)
-	lastUpload, err := storage.LoadUploadState(dir)
+	lastUpload, err := storage.LoadUploadState(stateDir)
 	if err != nil {
 		return fmt.Errorf("load state.json (fix or remove it before restarting): %w", err)
 	}
@@ -80,9 +106,9 @@ func run(console, dryRun bool) error {
 			_, err := fmt.Fprintln(os.Stdout, message)
 			return err
 		}
-		return ui.Message("CWG RPG Uploader", message)
+		return showMessage("CWG RPG Uploader", message)
 	}
-	if err := ensureUploadNotice(dir, &config, dryRun, showNotice); err != nil {
+	if err := ensureUploadNotice(configDir, &config, dryRun, showNotice); err != nil {
 		return err
 	}
 	if dryRun {
@@ -92,39 +118,44 @@ func run(console, dryRun bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	application := &app.App{
-		Dir: dir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
+		Dir: stateDir, ConfigDir: configDir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
 		Client: &leaderboard.Client{URL: leaderboard.BaseURL, HTTP: httpClient},
 		Logger: logger, Commands: make(chan app.Command, 16), Updates: make(chan app.Status, 1),
 	}
 	done := make(chan struct{})
 	go func() { defer close(done); application.Run(ctx) }()
 	if console {
-		for {
-			select {
-			case <-ctx.Done():
-				<-done
-				return nil
-			case status := <-application.Updates:
-				if dryRun && strings.HasPrefix(status.Message, "Dry run:") {
-					cancel()
-					<-done
-					return nil
-				}
-			}
-		}
+		return runConsole(ctx, cancel, application, done, dryRun)
 	}
-	err = ui.RunTray(ctx, cancel, application.Commands, application.Updates, config, dir)
+	err = runTray(ctx, cancel, application, configDir)
 	cancel()
 	<-done
 	return err
+}
+
+func runConsole(ctx context.Context, cancel context.CancelFunc, application *app.App, done <-chan struct{}, dryRun bool) error {
+	for {
+		select {
+		case <-ctx.Done():
+			<-done
+			return nil
+		case status := <-application.Updates:
+			if dryRun && strings.HasPrefix(status.Message, "Dry run:") {
+				fmt.Fprintln(os.Stdout, status.Message)
+				cancel()
+				<-done
+				return nil
+			}
+		}
+	}
 }
 
 func ensureUploadNotice(dir string, config *storage.Config, dryRun bool, show func(string) error) error {
 	if config.UploadNoticeShown {
 		return nil
 	}
-	message := "This app sends CWG RPG saves to a third-party public leaderboard. Existing saves upload when Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder through the tray or config.json. Already queued uploads and retries continue when Automatic uploads is off."
-	message += fmt.Sprintf("\n\nAutomatic uploads configured: %t\nConfiguration and rotating logs: %s", config.Automatic, dir)
+	message := "This app sends CWG RPG saves to a third-party public leaderboard. Existing saves upload when Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder in config.json, or through the Windows tray. Already queued uploads and retries continue when Automatic uploads is off."
+	message += fmt.Sprintf("\n\nAutomatic uploads configured: %t\nConfiguration directory: %s", config.Automatic, dir)
 	if dryRun {
 		message = "Dry run: no saves will be uploaded. This notice will appear again before the first normal run.\n\n" + message
 	}

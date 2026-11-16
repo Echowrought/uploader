@@ -4,13 +4,16 @@ For installation and everyday use, see [README.md](README.md).
 
 ## Settings
 
-Both installed and portable copies use `%LOCALAPPDATA%\CWGRPGUploader\config.json`.
-The app creates defaults when this file is absent. Restart after manual edits;
+Windows installed and portable copies use `%LOCALAPPDATA%\CWGRPGUploader\config.json`.
+Linux settings use `${XDG_CONFIG_HOME:-$HOME/.config}/cwg-rpg-uploader/config.json`;
+history/logs use `${XDG_STATE_HOME:-$HOME/.local/state}/cwg-rpg-uploader/`.
+XDG directory overrides must be absolute. Linux does not depend on systemd or a desktop.
+The app creates defaults when configuration is absent and a save path is available. Restart after manual edits;
 tray changes are validated and saved before being applied.
 
 ```json
 {
-  "save_folder": "%USERPROFILE%\\Documents\\Warcraft III\\CustomMapData\\CWG2",
+  "save_folder": "C:\\path\\to\\CWG2",
   "poll_interval_seconds": 5,
   "upload_automatically": true,
   "proxy_url": ""
@@ -19,16 +22,28 @@ tray changes are validated and saved before being applied.
 
 | Setting | Meaning |
 | --- | --- |
-| `save_folder` | Absolute save-folder path after expanding `%VARIABLE%` references |
+| `save_folder` | Literal absolute save-folder path; no environment-variable or `~` expansion |
 | `poll_interval_seconds` | Poll frequency, from 1 to 3600 seconds; default 5 |
 | `upload_automatically` | Detect changes automatically; default `true`. Turning it off does not cancel accepted work or retries |
 | `proxy_url` | Optional proxy fallback; see below |
 
-The example save path is the usual location, not a requirement. Initial discovery
-uses the Windows Documents known folder and honors redirection, including
-OneDrive. Discovery is needed only when configuration is absent or `save_folder`
-is omitted. An explicitly empty or null folder is invalid, not a request to
-rediscover it.
+The example save path is a placeholder; replace it with your actual absolute
+CWG save-folder path. Only
+the Windows tray build discovers the Documents known folder, honoring redirection
+including OneDrive, when configuration is absent or `save_folder` is omitted.
+An explicitly empty or null folder is invalid, not a request to rediscover it.
+
+Both console builds print the full `config.json` and `uploader.log` paths before
+loading settings, so those locations remain visible after a configuration error.
+Neither console prompts or discovers a save folder. Supply the absolute game
+save folder with `--save-folder PATH` when no folder is configured, or create
+configuration with `save_folder` set. Linux never guesses Wine/Proton prefixes. The flag works on both platforms and remembers the path in
+configuration; invalid existing configuration still needs manual correction.
+Paths are used literally: `%VARIABLE%`, `$VARIABLE`, `${VARIABLE}`, and `~` are
+not expanded by the app. Your shell can expand arguments before passing them to
+`--save-folder`; use a full absolute path in JSON.
+Linux folder identity is case-sensitive: changing `Saves` to `saves` can select a
+different folder and cause its snapshot to be uploaded separately.
 
 **To prevent automatic uploads before the first normal launch:** create the
 application-data folder and `config.json` yourself, use the example with your
@@ -36,7 +51,11 @@ actual save path, and set `upload_automatically` to `false`. Do not launch the a
 first to obtain the example: default automatic uploads include existing saves.
 **Upload now** can still request an upload with automatic detection disabled.
 
-Sign-in startup is not a JSON setting. Setup and the tray use the current-user
+In either console, begin with `--dry-run --save-folder PATH` if you want the app to create
+configuration without uploading, then set `upload_automatically` to `false`
+before a normal launch. This is also safe when existing saves are present.
+
+Windows sign-in startup is not a JSON setting. Setup and the tray use the current-user
 Windows startup registration. Launching the app does not recreate it, and
 Windows startup policy can independently suppress it. The legacy
 `launch_at_login` field is ignored.
@@ -92,8 +111,10 @@ because the startup checkbox was enabled from that terminal.
 
 ## Logs and diagnostics
 
-Logs live at `%LOCALAPPDATA%\CWGRPGUploader\uploader.log`; use **Open logs** from
-the tray. The log rotates at 2 MiB, keeping three previous files, with no external
+Windows logs live at `%LOCALAPPDATA%\CWGRPGUploader\uploader.log`; use **Open logs**
+from the tray. Linux logs live in the XDG state directory described above and
+are also written to the terminal. Stop Linux with Ctrl+C or SIGTERM, and never
+remove its `instance.lock` file while an instance may be running. The log rotates at 2 MiB, keeping three previous files, with no external
 rotation tool required.
 
 - `[poller]`, `[uploader]`, and `[app]` identify the component.

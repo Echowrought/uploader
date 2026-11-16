@@ -1,4 +1,6 @@
 /dist/
+/dist-linux/
 /profiles/
 *.test.exe
+*.test
 /coverage.out

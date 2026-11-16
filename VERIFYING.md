@@ -55,7 +55,50 @@ if ($LASTEXITCODE -ne 0) { throw "Installer verification failed" }
 
 For an independent Go payload rebuild, also obtain and verify the matching portable ZIP, then follow the steps below. Compare payload executables, not installer containers; installer output is not promised to be byte-reproducible. The compiler bootstrap is pinned in `scripts/install-inno.ps1`; the build information records the compiler version and hash.
 
-## 2. Rebuild the executable
+### Verify and rebuild the Linux console
+
+Download the Linux tar.gz and `linux-build-info.json` from the same release.
+Use Bash, GitHub CLI, Python 3 for reading JSON, and the exact Go version recorded
+in the verified metadata. These commands do not run the uploader:
+
+```sh
+set -eu
+tag=v0.1.3 # Replace with the release tag.
+repository=cwg-rpg-community/uploader
+workflow="$repository/.github/workflows/release.yml"
+archive="cwg-rpg-uploader-console-$tag-linux-amd64.tar.gz"
+gh attestation verify linux-build-info.json --repo "$repository" --signer-workflow "$workflow" --source-ref "refs/tags/$tag"
+commit=$(python3 -c 'import json; print(json.load(open("linux-build-info.json"))["source_commit"])')
+gh attestation verify "$archive" --repo "$repository" --signer-workflow "$workflow" --source-ref "refs/tags/$tag" --source-digest "$commit"
+mkdir verified-linux
+tar -xzf "$archive" -C verified-linux
+recorded=$(python3 -c 'import json; print(json.load(open("linux-build-info.json"))["executables"][0]["sha256"])')
+expected_go=$(python3 -c 'import json; print(json.load(open("linux-build-info.json"))["go"]["GOVERSION"])')
+printf '%s  %s\n' "$recorded" verified-linux/cwg-rpg-uploader-console | sha256sum -c -
+```
+
+For an independent rebuild, continue in the same shell. Keep `.git` and use the
+exact recorded Go version. Clone into a new directory and verify the source:
+
+```sh
+git clone https://github.com/cwg-rpg-community/uploader.git uploader-linux-rebuild
+cd uploader-linux-rebuild
+git checkout --detach "$tag"
+test "$(git rev-parse HEAD)" = "$commit"
+test -z "$(git status --porcelain)"
+test "$(GOTOOLCHAIN=local go env GOVERSION)" = "$expected_go"
+rebuilt=$(mktemp "${TMPDIR:-/tmp}/cwg-rpg-uploader-rebuilt.XXXXXX")
+GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS= GOEXPERIMENT= \
+  go build -trimpath -ldflags="-X cwgrpguploader/internal/buildinfo.Version=$tag" \
+  -o "$rebuilt" ./cmd/uploader
+printf '%s  %s\n' "$recorded" "$rebuilt" | sha256sum -c -
+rm "$rebuilt"
+```
+
+Use an output path outside the clean checkout; do not overwrite a file you need.
+Compare binary hashes rather than tar.gz bytes, whose timestamps can differ.
+
+## 2. Rebuild the Windows executable
 
 You'll need Windows, [Git](https://git-scm.com/), and the exact [Go version](https://go.dev/dl/) shown by:
 
@@ -99,9 +142,9 @@ $env:GOEXPERIMENT = ""
 
 if ((go env GOVERSION) -ne $build.go.GOVERSION) { throw "Install the exact Go version recorded in build-info.json" }
 
-go build -trimpath -ldflags="-H=windowsgui -X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader.exe .
+go build -trimpath -ldflags="-H=windowsgui -X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader.exe ./cmd/uploader
 if ($LASTEXITCODE -ne 0) { throw "Tray build failed" }
-go build -tags=console -trimpath -ldflags="-X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader-console.exe .
+go build -tags=console -trimpath -ldflags="-X cwgrpguploader/internal/buildinfo.Version=$tag" -o dist/cwg-rpg-uploader-console.exe ./cmd/uploader
 if ($LASTEXITCODE -ne 0) { throw "Console build failed" }
 ```
 
@@ -124,6 +167,10 @@ A match means your independent build produced the exact executable distributed i
 
 ## What the build information tells you
 
-The attested `build-info.json` records the source commit, workflow run, Go settings, runner image version, pinned action revisions, executable hashes (including setup when present), and the Inno Setup compiler version/hash. It preserves those details beyond the lifetime of Actions logs. It does not let you request an old GitHub runner image or guarantee that every future environment can reproduce the build.
+Linux releases include a separately attested `linux-build-info.json` with native
+Linux source/build settings and the Linux executable hash. Both manifests use
+the same workflow identity and are verified independently.
+
+The attested Windows `build-info.json` records the source commit, workflow run, Go settings, runner image version, pinned action revisions, executable hashes (including setup when present), and the Inno Setup compiler version/hash. It preserves those details beyond the lifetime of Actions logs. It does not let you request an old GitHub runner image or guarantee that every future environment can reproduce the build.
 
 Attestations protect against substituting different files without the expected workflow identity. They don't protect against malicious source, compromised build tools, or someone authorized to change the trusted workflow. Rebuilding provides an additional source-to-binary check, not a code-security audit.

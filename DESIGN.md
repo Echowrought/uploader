@@ -73,7 +73,25 @@ These observations come from the current frontend, not a documented stable API c
 
 Provide a Windows system-tray application for other players, plus a separate console executable for development and troubleshooting. Both share application code: the normal build defaults to tray mode and uses the Windows GUI subsystem; the `console` Go build tag selects console mode and the console subsystem. No `--console` flag is needed. Separate binaries avoid console attachment/allocation machinery and give command-line users normal output, redirection, and shell waiting. The console binary uploads according to configuration unless `--dry-run` is supplied.
 
-Tray actions:
+Linux support is console-only and uses the same coordinator/scanner/client.
+It needs no graphical desktop, C runtime, systemd, or Wine runtime to read the
+selected folder. No Wine/Proton discovery, tray, desktop actions, or startup
+registration is provided. An explicit `--save-folder` path is validated and
+remembered; both platforms accept it. Ctrl+C/SIGTERM cancels and joins work.
+
+Linux uses `$XDG_CONFIG_HOME/cwg-rpg-uploader` (default `$HOME/.config`) for
+configuration and `$XDG_STATE_HOME/cwg-rpg-uploader` (default `$HOME/.local/state`)
+for history/logs. Overrides must be absolute. A close-on-exec, nonblocking flock
+on a retained state-directory lock file prevents duplicate instances and is
+released on descriptor closure or process death. Do not unlink a held lock file.
+Windows keeps its existing unified data directory and named session mutex.
+
+Folder identity is lexical and case-sensitive on Linux; Windows retains
+case-insensitive comparison. Save-file eligibility and essential-prefix matching
+remain case-insensitive on both platforms. This does not canonicalize symlinks
+or provide a folder-wide atomic filesystem snapshot.
+
+Windows tray actions:
 
 - View current status, last successful upload, pending changes, and the latest error.
 - Pause or resume automatic uploads.
@@ -96,7 +114,11 @@ The tray directly reads and changes a current-user Windows `Run` registry entry 
 
 ## Save Folder Discovery
 
-Try the Windows Documents known folder, including redirected or OneDrive-backed locations, followed by:
+Both console builds require an explicitly configured save folder, supplied via
+`--save-folder` or `config.json`; neither prompts nor discovers folders. Print
+full configuration/log-file paths before loading settings, including on startup
+failure. Do not assume native Linux Documents maps to a Wine/Proton prefix.
+Only the Windows tray build tries the Documents known folder, including redirected or OneDrive-backed locations, followed by:
 
 ```text
 Warcraft III\CustomMapData\CWG2
@@ -104,9 +126,9 @@ Warcraft III\CustomMapData\CWG2
 
 The usual unredirected path is `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`. Resolve the Documents known folder rather than hardcoding a username or assuming that Documents is always beneath `%USERPROFILE%`.
 
-Resolve the Documents default lazily, only for a missing configuration or an omitted `save_folder`; a complete configured override must not depend on Documents discovery succeeding. An explicitly empty or null folder remains invalid.
+In the Windows tray build, resolve the Documents default lazily, only for a missing configuration or an omitted `save_folder`; a complete configured override must not depend on Documents discovery succeeding. An explicitly empty or null folder remains invalid.
 
-Allow a user-selected folder override and persist it in `config.json`. Support expanding `%USERPROFILE%` and `%LOCALAPPDATA%` in configured paths. Do not assume the repository directory is the save directory.
+Allow a user-selected folder override and persist it in `config.json`. Require a literal absolute configured path; do not expand environment variables or `~`. Do not assume the repository directory is the save directory.
 
 Missing or inaccessible folders should produce a clear waiting/error status rather than terminate the application.
 
@@ -192,16 +214,16 @@ Use a human-editable `config.json`, for example:
 
 ```json
 {
-  "save_folder": "%USERPROFILE%\\Documents\\Warcraft III\\CustomMapData\\CWG2",
+  "save_folder": "C:\\path\\to\\CWG2",
   "poll_interval_seconds": 5,
   "upload_automatically": true,
   "proxy_url": ""
 }
 ```
 
-The example path describes the usual location; initial discovery must honor the Windows Documents known folder and persist the discovered path when redirected. Automatic uploads default to enabled. Launch at sign-in is read from Windows and is never created automatically.
+The example path is a placeholder to replace with the actual absolute save path; initial tray discovery must honor the Windows Documents known folder and persist the discovered path when redirected. Console builds require an explicit folder instead. Automatic uploads default to enabled. Launch at sign-in is read from Windows and is never created automatically.
 
-Share configuration validation between loading and saving, including first-run defaults. Reject null configuration documents and null values for known settings; omitted settings retain their defaults. The expanded save folder must be absolute, and the polling interval must be between 1 and 3600 seconds. Preserve environment-variable references in stored settings. Runtime commands edit a config value copy and replace the live config only after validation and persistence succeed.
+Share configuration validation between loading and saving, including first-run defaults. Reject null configuration documents and null values for known settings; omitted settings retain their defaults. The literal save folder must be absolute, and the polling interval must be between 1 and 3600 seconds. Do not perform environment-variable substitution; shells may expand CLI arguments before the app receives them. Runtime commands edit a config value copy and replace the live config only after validation and persistence succeed.
 
 Atomically persist successful-upload state in `%LOCALAPPDATA%\CWGRPGUploader\state.json`, including:
 

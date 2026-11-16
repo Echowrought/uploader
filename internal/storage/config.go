@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -51,17 +50,13 @@ func SaveConfig(dir string, config Config) error {
 	return atomicJSON(filepath.Join(dir, "config.json"), config)
 }
 
-// Validate checks a candidate without changing it or writing anything. Keep
-// environment-variable paths intact in configuration; expand them when used.
+// Validate checks a candidate without changing it or writing anything.
+// Save paths are literal absolute paths, without variable substitution.
 func (config Config) Validate() error {
 	if config.PollSeconds < 1 || config.PollSeconds > 3600 {
 		return errors.New("poll_interval_seconds must be between 1 and 3600")
 	}
-	expanded, err := ExpandPath(config.SaveFolder)
-	if err != nil {
-		return err
-	}
-	if !filepath.IsAbs(expanded) {
+	if !filepath.IsAbs(config.SaveFolder) {
 		return errors.New("save_folder must be an absolute path")
 	}
 	return nil
@@ -92,24 +87,6 @@ func decodeConfig(data []byte, config *Config) (bool, error) {
 		}
 	}
 	return hasFolder, json.Unmarshal(data, config)
-}
-
-var variable = regexp.MustCompile(`%([^%]+)%`)
-
-func ExpandPath(path string) (string, error) {
-	var missing string
-	expanded := variable.ReplaceAllStringFunc(path, func(match string) string {
-		name := strings.Trim(match, "%")
-		value, exists := os.LookupEnv(name)
-		if !exists {
-			missing = name
-		}
-		return value
-	})
-	if missing != "" {
-		return "", fmt.Errorf("environment variable %s is not set", missing)
-	}
-	return filepath.Clean(expanded), nil
 }
 
 func atomicJSON(path string, value any) error {
