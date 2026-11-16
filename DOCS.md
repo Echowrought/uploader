@@ -118,6 +118,7 @@ internal/
     logging.go         # Named component loggers
     commands.go        # Tray commands and configuration changes
     status.go          # Nonblocking status publishing to the tray
+    menu.go            # Independent menu rows, history date labels, and click details
 
   saves/
     scan.go            # Discover eligible files, read stable snapshots, hash contents
@@ -204,6 +205,40 @@ Configuration loading and saving both call `Config.Validate`, including on first
 Choosing another save folder writes configuration, replaces the poller, and clears selected-folder rejection/preview feedback. Pending and active/backoff work remain represented because accepted delivery continues. Later terminal feedback is shown only when its source folder matches the current normalized selection, using Windows case-insensitive or Linux case-sensitive comparison; old-folder successes are always recorded and persisted as history. Old-folder events do not clear current command errors. A failed config write leaves existing polling, presentation, and delivery unchanged. The uploader is neither reset nor notified about the selection: active and pending jobs continue, backoff remains in force, and new snapshots replace pending data through the existing coalescing policy. Source-folder identity travels with each immutable snapshot and its completion event, so an old job never gets recorded as originating from the newly selected folder.
 
 Shutdown cancels the uploader's HTTP call or retry wait and drains lifecycle events through channel closure before waiting for the single worker. The worker cannot exit before its synchronous HTTP call returns, so no private result channel or worker `WaitGroup` is needed. A request that actually succeeded is still reported and persisted during shutdown. New queue calls fail once stopping begins.
+
+The tray shows independent **Detection**, **Upload**, and **Last success** rows.
+`Status.Menu(now)` produces compact labels and untruncated click details from
+published view projections, not by parsing the combined status string. The poller
+owns a session-local observation timestamp for the current settled fingerprint.
+Detection shows `No changes since HH:mm`, adding a date for earlier days;
+click details explain the observation scope and retain seconds. The timestamp
+starts on the first successful settled scan, not at the last upload or a file's
+mtime. New settled contents, folder changes, pauses, and scan failures reset the
+observation window. Forced delivery of unchanged contents does not reset it.
+The timestamp is not persisted or reconstructed from upload history. History
+uses the viewer's calendar/timezone: `Today, HH:mm` for the current day, otherwise
+`YYYY-MM-DD, HH:mm`. Click details retain seconds, source folder, and delivery
+metadata. A history-write failure is marked on the successful-history row without
+claiming the remote upload failed. App ticks refresh labels across midnight;
+there is no separate UI scheduling state. Command failures remain visible as
+user-action error dialogs, while background scanning/retry errors stay in their
+respective status rows. Commands carry optional one-shot result channels; the
+tray supplies a fresh channel buffered to one and consumes its result independently
+of status updates. The coordinator replies with an error or nil after handling
+the command, with cancellation unblocking abandoned replies during shutdown.
+A nil result acknowledges the command, not a successful remote upload. Ordinary
+status updates still coalesce; command-failure dialogs never depend on receiving
+a transient status error or comparing its text with an earlier error.
+The upload row uses `Retry at …` during backoff and `Retrying saves` for a repeat
+attempt. A new snapshot's first attempt remains `Uploading saves`, even when
+it shares an older snapshot's backoff. The worker reports this attempt metadata
+with its start event; the view does not infer it from previous UI messages.
+The tooltip uses the same labeled sections. The combined message remains
+available for console dry-run completion and profiling.
+
+**Automatic uploads**, **Upload now**, **Open leaderboard**, and **Quit** remain
+on the main menu. **Settings** contains folder selection, sign-in startup,
+configuration, and logs.
 
 The tray sends commands such as toggling Automatic uploads and Upload now to the application coordinator. Its sign-in checkbox independently queries `StartupEnabled` and invokes `SetStartup`; startup changes only update that checkbox, and errors are shown directly. The registration must target the current executable. Launching the app does not recreate or overwrite registration, and legacy `launch_at_login` JSON fields are ignored. Windows policy can independently suppress registered startup entries. The coordinator publishes status updates back to the tray through a thread-safe boundary. Background workers must not directly modify UI state; UI updates must follow the tray library's threading requirements.
 

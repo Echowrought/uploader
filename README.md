@@ -49,13 +49,15 @@ Ctrl+C or SIGTERM stops the app and its retries. There is no Linux tray, folder 
 
 | Action | Behavior |
 | --- | --- |
-| **Status** | Click the top item to see the full status and save folder |
-| **Last upload** | Shows the last confirmed successful submission |
+| **Detection** | Shows scanning, settling, paused detection, or `No changes since HH:mm` (with a date for older observations), plus save warnings; click for full details |
+| **Upload** | Shows pending/active work, retries, or rejection independently of detection; `Retrying saves` distinguishes repeat attempts from `Uploading saves`, while `Retry at …` shows backoff; click for details |
+| **Last success** | Shows confirmed delivery as `Today, HH:mm` or a date/time, without seconds; click for full last-upload details and any history-save error |
 | **Automatic uploads** | Enables/disables detection of new changes; accepted uploads and retries continue |
 | **Upload now** | Requests a snapshot even when automatic detection is off; still respects settling and retry delays |
-| **Choose save folder...** | Changes the watched folder; already accepted work from the previous folder can still finish |
-| **Launch at Windows sign-in** | Changes the current-user Windows startup registration; no administrator rights needed |
-| **Open leaderboard / logs / config.json** | Opens the selected resource |
+| **Settings → Choose save folder...** | Changes the watched folder; already accepted work from the previous folder can still finish |
+| **Settings → Launch at Windows sign-in** | Changes the current-user Windows startup registration; no administrator rights needed |
+| **Open leaderboard** | Opens the public leaderboard |
+| **Settings → Open logs / config.json** | Opens diagnostics or settings; restart after manual config edits |
 | **Quit** | Cancels active network work and stops retries |
 
 Successful uploads stay quiet. Check the status and logs for errors. Only one instance can run per Windows session. After moving a portable executable, enable sign-in startup from its new location if needed.

@@ -93,13 +93,13 @@ or provide a folder-wide atomic filesystem snapshot.
 
 Windows tray actions:
 
-- View current status, last successful upload, pending changes, and the latest error.
-- Pause or resume automatic uploads.
+- Detection's `No changes since HH:mm` describes observations of the current settled snapshot in this session, never upload success or pre-startup filesystem history. Pauses, failed scans, new settled contents, and folder changes restart the observation window; unchanged manual submissions do not.
+- View independent Detection, Upload, and Last success rows; click each for full details. Detection never implies successful delivery. Pending and active/backoff work can appear together. History uses local `Today, HH:mm` or a date/time without seconds in the menu, and retains the full timestamp on click; history-write failures are explicitly marked.
+- Pause or resume automatic uploads. Report each user-command failure through a reliable per-command result, independently of coalesced status snapshots.
 - Upload now.
-- Choose or change the save folder.
-- Launch at Windows sign-in (checked when enabled).
+- Under Settings, choose/change the save folder or launch at Windows sign-in (checked when enabled).
 - Open the leaderboard.
-- Open logs.
+- Under Settings, open logs or config.json.
 - Quit.
 
 The tray owns a generic, non-inheritable Windows Job Object with kill-on-close enabled for subprocesses that must not outlive the uploader. Launch owned children atomically into that job using the Windows 10+ process job-list attribute, so normal tray shutdown, crashes, and forced uploader termination cannot leave them running. The folder picker is currently its only consumer; keep its script, timeout value, and path decoding separate from generic process handling. Browsers and editors opened through the shell remain independent. Preserve whitespace in the actual selected path, removing only an optional leading UTF-8 BOM. Limit tray tooltips by UTF-16 units, reserving the terminator and avoiding split surrogate pairs; menu labels may use rune-based readability limits.

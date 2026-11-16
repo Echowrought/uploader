@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf16"
 
@@ -22,27 +23,39 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 	systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTooltip("CWG RPG Uploader")
-		statusItem := systray.AddMenuItem("Starting...", "Show full status")
-		lastItem := systray.AddMenuItem("Last upload: never", "")
-		lastItem.Disable()
+		detectionItem := systray.AddMenuItem("Detection: Starting", "Show detection details")
+		uploadItem := systray.AddMenuItem("Upload: Idle", "Show upload details")
+		historyItem := systray.AddMenuItem("Last success: Never", "Show confirmed upload history")
 		systray.AddSeparator()
 		automaticUploads := systray.AddMenuItemCheckbox("Automatic uploads", "Send new saves automatically; queued uploads and retries continue when off", config.Automatic)
 		upload := systray.AddMenuItem("Upload now", "Upload current saves even with Automatic uploads off")
-		folder := systray.AddMenuItem("Choose save folder...", "")
-		startupEnabled, startupErr := StartupEnabled()
-		startup := systray.AddMenuItemCheckbox("Launch at Windows sign-in", "Register this executable; Windows startup policy may override it", startupEnabled)
-		board := systray.AddMenuItem("Open leaderboard", "")
-		logs := systray.AddMenuItem("Open logs", "")
-		settings := systray.AddMenuItem("Open config.json (restart to reload)", "")
 		systray.AddSeparator()
+		board := systray.AddMenuItem("Open leaderboard", "")
+		settings := systray.AddMenuItem("Settings", "")
+		folder := settings.AddSubMenuItem("Choose save folder...", "")
+		startupEnabled, startupErr := StartupEnabled()
+		startup := settings.AddSubMenuItemCheckbox("Launch at Windows sign-in", "Register this executable; Windows startup policy may override it", startupEnabled)
+		configuration := settings.AddSubMenuItem("Open config.json (restart to reload)", "")
+		logs := settings.AddSubMenuItem("Open logs", "")
 		quit := systray.AddMenuItem("Quit", "")
 		go func() {
 			latest := app.Status{Message: "Starting", Config: config}
 			picked := make(chan folderResult, 1)
 			picking := false
 			send := func(command app.Command) {
+				result := make(chan error, 1)
+				command.Result = result
 				select {
 				case commands <- command:
+					go func() {
+						select {
+						case err := <-result:
+							if err != nil {
+								Message("CWG RPG Uploader", err.Error())
+							}
+						case <-ctx.Done():
+						}
+					}()
 				case <-ctx.Done():
 				}
 			}
@@ -63,19 +76,22 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					return
 				case update := <-updates:
 					latest = update
-					statusItem.SetTitle(display(update.Message, 90))
-					systray.SetTooltip(tooltip("CWG RPG: " + update.Message))
-					if !update.LastUpload.IsZero() {
-						lastItem.SetTitle("Last upload: " + update.LastUpload.Format("2006-01-02 15:04:05"))
-					}
+					menu := update.Menu(time.Now())
+					detectionItem.SetTitle(display(menu.Detection.Title, 90))
+					uploadItem.SetTitle(display(menu.Upload.Title, 90))
+					historyItem.SetTitle(display(menu.History.Title, 90))
+					systray.SetTooltip(tooltip("CWG RPG: " + menu.Detection.Title + "; " + menu.Upload.Title + "; " + menu.History.Title))
 					if update.Config.Automatic {
 						automaticUploads.Check()
 					} else {
 						automaticUploads.Uncheck()
 					}
-				case <-statusItem.ClickedCh:
-					text := latest.Message + "\n\nSave folder: " + latest.Config.SaveFolder
-					go Message("CWG RPG Uploader status", text)
+				case <-detectionItem.ClickedCh:
+					go Message("CWG RPG Uploader — Detection", latest.Menu(time.Now()).Detection.Details)
+				case <-uploadItem.ClickedCh:
+					go Message("CWG RPG Uploader — Upload", latest.Menu(time.Now()).Upload.Details)
+				case <-historyItem.ClickedCh:
+					go Message("CWG RPG Uploader — Last success", latest.Menu(time.Now()).History.Details)
 				case <-automaticUploads.ClickedCh:
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
@@ -113,7 +129,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					showError(Open(leaderboard.BaseURL + "/#leaderboard"))
 				case <-logs.ClickedCh:
 					showError(Open(dir))
-				case <-settings.ClickedCh:
+				case <-configuration.ClickedCh:
 					showError(Open(filepath.Join(dir, "config.json")))
 				}
 			}

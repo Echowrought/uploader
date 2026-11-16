@@ -27,10 +27,11 @@ const (
 )
 
 type pollEvent struct {
-	kind     pollEventKind
-	update   *folderUpdate
-	err      error
-	warnings []string
+	kind           pollEventKind
+	update         *folderUpdate
+	err            error
+	warnings       []string
+	unchangedSince time.Time
 }
 
 // uploadEvent is implemented by value events containing only lifecycle metadata,
@@ -44,6 +45,7 @@ type uploadEvent interface {
 type uploadStarted struct {
 	id         uint64
 	saveFolder string
+	retry      bool
 }
 
 // Identity describes the failed attempt, not necessarily the next one. Backoff
