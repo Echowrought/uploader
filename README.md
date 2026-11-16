@@ -2,7 +2,7 @@
 
 A Windows 10+ tray app that watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard). It never modifies game saves.
 
-**Automatic uploads are enabled by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. This app is not affiliated with that service. Read the upload notice before the first normal run.
+**Automatic uploads are enabled by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. Read the upload notice before the first normal run.
 
 ## Install and run
 
