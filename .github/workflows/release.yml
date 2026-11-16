@@ -79,6 +79,7 @@ jobs:
         $tag = $env:GITHUB_REF_NAME
         $docs = @(
           "./dist/README.md"
+          "./dist/CONFIGURATION.md"
           "./dist/VERIFYING.md"
           "./dist/LICENSE"
           "./dist/THIRD_PARTY_NOTICES.md"

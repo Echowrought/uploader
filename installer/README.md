@@ -88,7 +88,7 @@ resolved from the repository root:
     -BuildDirectory dist -OutputDirectory "$env:TEMP\cwg-installers"
 ```
 
-All five payload files are listed explicitly in `cwg-rpg-uploader.iss`; console and
+All six payload files are listed explicitly in `cwg-rpg-uploader.iss`; console and
 profiling binaries, configuration/history, and unrelated build output are not included.
 A failed compilation removes the target setup executable rather than leaving a
 stale installer at that path. Normal Go-only builds do not require Inno Setup.

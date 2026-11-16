@@ -1,6 +1,65 @@
-# Code Organization
+# Development guide
 
-This is the implementation layout for CWG RPG Uploader. Product behavior and technical decisions are documented in [DESIGN.md](DESIGN.md). Icon artwork and asset regeneration are documented in [assets/README.md](assets/README.md).
+Build, release, and implementation reference for CWG RPG Uploader. User settings and troubleshooting are documented in [CONFIGURATION.md](CONFIGURATION.md). Product behavior and technical decisions are documented in [DESIGN.md](DESIGN.md). Icon artwork and asset regeneration are documented in [assets/README.md](assets/README.md).
+
+## Build
+
+Requires Windows and Go 1.26 or newer. Prefer a supported toolchain; the release
+workflow pins its exact Go version. Windows PowerShell is used for the folder
+picker and build scripts. Ordinary builds need no C compiler.
+
+```powershell
+.\scripts\check.ps1
+.\build.ps1
+# For a release-versioned local build:
+.\build.ps1 -Version v1.2.3
+```
+
+`check.ps1` runs workflow lint, uncached tests, and vet without touching `dist`.
+`build.ps1` deletes previous `dist` output, invokes those checks, and builds the
+tray and console executables with documentation and notices. Failure removes
+partial output. Keep anything you need to preserve outside `dist`.
+
+The tray build uses the Windows GUI subsystem; the `console` tag selects console
+mode and the console subsystem, providing normal terminal waiting/redirection.
+Both retain Go symbol tables and DWARF debug information. Local builds default
+to `dev`; release builds embed the tag through linker `-X` into
+`internal/buildinfo.Version`. Upload requests send `CWGRPGUploader/<version>` as
+the User-Agent. The workflow supplies its tag to both binary builds.
+
+`scripts/notices.ps1` is a build-only helper called by `build.ps1`, not a standalone
+command. Tests use temporary save fixtures and local HTTP servers, not the real
+leaderboard. See the test-budget and virtual-time details below. A race-detector
+run needs a CGO-capable C compiler; live upload compatibility testing requires
+explicit approval.
+
+Specialized guides:
+
+- [Installer packaging](installer/README.md)
+- [Upload-disabled profiling](cmd/profile/readme.md)
+- [Icon assets and regeneration](assets/README.md)
+- [Release verification and exact rebuild settings](VERIFYING.md)
+
+## Release policy
+
+Tags use `vX.Y.Z`, with three non-negative integer components and no leading
+zeros. Compare X, then Y, then Z numerically (`v1.10.0 > v1.9.9`); the components
+do not promise Semantic Versioning compatibility semantics.
+
+The tag-triggered workflow creates a draft marked **pre-release** by default,
+containing the tray installer, two portable packages, attested build information,
+verification instructions, and generated change notes. Review and download-check
+it before publishing. Publishing retains the pre-release flag; explicitly clear
+it when promoting to stable. Stability comes from GitHub's release flag, not a
+tag suffix. Actions are pinned to commit SHAs; update those pins deliberately.
+
+A repository administrator should enable **release immutability** before
+publishing. The workflow does not enable it. When enabled, publication locks
+assets and the associated tag; the title and release notes remain editable.
+Attach all assets while the release is a draft and publish corrections as a new
+version. Do not assume older releases become immutable retroactively. Protect
+release tags and workflow changes: provenance cannot defend against malicious
+changes authorized through the trusted workflow.
 
 ## Layout
 
@@ -132,7 +191,7 @@ Keep core save scanning and HTTP behavior independent of Windows UI code so they
 - Introduce narrow interfaces where they provide a concrete testing boundary, such as substituting a fake upload client.
 - Put each file's main workflow first, followed by its direct helpers and lower-level utilities.
 - Keep this small structure and split packages only when real complexity justifies it.
-- Require Go 1.25+ for stable `testing/synctest`. Run shared tests with `go test ./...` and `go vet ./...`, then check the console entry point with `go test -tags=console .` and `go vet -tags=console .`; additionally use `go test -race ./internal/app` when a CGO-capable C compiler is installed. Ordinary Windows builds do not require that compiler.
+- The module currently requires Go 1.26+. Use stable `testing/synctest` for virtual-time tests. Run shared tests with `go test ./...` and `go vet ./...`, then check the console entry point with `go test -tags=console .` and `go vet -tags=console .`; additionally use `go test -race ./internal/app` when a CGO-capable C compiler is installed. Ordinary Windows builds do not require that compiler.
 - The upload-client interface is the network test seam. Public uploader tests use queue calls and lifecycle events to cover concurrent callers, queueing under event backpressure, latest-pending coalescing, retry timers under virtual time, cancellation, and reliable success events during shutdown. Pure retry-policy tests cover classification, jitter ranges, the backoff cap, and Retry-After. Lifecycle tests cover superseded rejection events without depending on internal state objects. Application tests cover persistence, polling during uploads, config-write failures, folder changes during active delivery, origin metadata, retained backoff across source changes, and explicit uploads with Automatic uploads off. Renderer tests cover composed detection, delivery, history, and errors. Sequence tests cover pending new-folder work during old-folder backoff, delayed lifecycle events for identical emissions, and pausing or settling after success.
 
 `scripts/check.ps1` runs tests through `scripts/go-tests.ps1` with `go test -json -count=1`. Every package must report less than 10 seconds of execution, independently for shared and console-entry runs. Compilation, dependency downloads, lint, and vet do not enter this budget. Never sum test durations: parallel tests and nested reports overlap. Budget failures list the five slowest top-level tests in the affected package. `scripts/test-go-tests.ps1` validates the reporter with canned events in the same PowerShell process, without long sleeps or subprocess launches. The release build invokes these checks too; raw `go test` alone does not enforce the budget.

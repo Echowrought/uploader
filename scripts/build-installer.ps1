@@ -13,7 +13,7 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     $build = (Resolve-Path -LiteralPath $BuildDirectory).Path
-    foreach ($name in @('cwg-rpg-uploader.exe', 'README.md', 'VERIFYING.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+    foreach ($name in @('cwg-rpg-uploader.exe', 'README.md', 'CONFIGURATION.md', 'VERIFYING.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
         if (-not (Test-Path -LiteralPath (Join-Path $build $name) -PathType Leaf)) {
             throw "Missing build input $name; run build.ps1 first"
         }

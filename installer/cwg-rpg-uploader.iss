@@ -41,6 +41,7 @@ Name: "startup"; Description: "Start CWG RPG Uploader when I sign in"; GroupDesc
 [Files]
 Source: "{#BuildDir}\cwg-rpg-uploader.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\CONFIGURATION.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\VERIFYING.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion

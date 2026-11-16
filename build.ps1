@@ -17,7 +17,7 @@ try {
     go build -tags=console -trimpath "-ldflags=$versionFlag" -o dist/cwg-rpg-uploader-console.exe .
     if ($LASTEXITCODE -ne 0) { throw 'Console build failed' }
     & (Join-Path $PSScriptRoot 'scripts\notices.ps1')
-    Copy-Item README.md, VERIFYING.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
+    Copy-Item README.md, CONFIGURATION.md, VERIFYING.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
     Write-Host 'Built dist/cwg-rpg-uploader.exe and dist/cwg-rpg-uploader-console.exe'
 } catch {
     if (Test-Path -LiteralPath dist) {
