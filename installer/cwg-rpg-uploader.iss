@@ -23,6 +23,7 @@ DisableProgramGroupPage=no
 AllowNoIcons=yes
 DisableDirPage=yes
 LicenseFile={#BuildDir}\LICENSE
+SetupIconFile=..\internal\windows\icon.ico
 UninstallDisplayIcon={app}\cwg-rpg-uploader.exe
 ; Let Restart Manager close the installed app before replacing its executable.
 ; Do not force termination or let Restart Manager bypass the final launch choice.

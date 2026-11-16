@@ -1,12 +1,7 @@
 package windows
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"image"
-	"image/color"
-	"image/png"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -25,7 +20,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 	}
 	defer job.Close()
 	systray.Run(func() {
-		systray.SetIcon(trayIcon())
+		systray.SetIcon(trayIcon)
 		systray.SetTooltip("CWG RPG Uploader")
 		statusItem := systray.AddMenuItem("Starting...", "Show full status")
 		lastItem := systray.AddMenuItem("Last upload: never", "")
@@ -169,29 +164,4 @@ func cleanDisplayText(text string) string {
 		}
 		return r
 	}, text)
-}
-
-// ICO containing a generated PNG keeps distribution to one executable.
-func trayIcon() []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
-			c := color.RGBA{35, 53, 74, 255}
-			if (x >= 13 && x <= 18 && y >= 6 && y <= 23) || (y >= 7 && y <= 12 && x >= 8 && x <= 23 && x+y >= 21 && y-x >= -10) || (y >= 25 && y <= 27 && x >= 7 && x <= 24) {
-				c = color.RGBA{110, 230, 175, 255}
-			}
-			img.SetRGBA(x, y, c)
-		}
-	}
-	var pngData bytes.Buffer
-	_ = png.Encode(&pngData, img)
-	header := make([]byte, 22)
-	binary.LittleEndian.PutUint16(header[2:], 1)
-	binary.LittleEndian.PutUint16(header[4:], 1)
-	header[6], header[7] = 32, 32
-	binary.LittleEndian.PutUint16(header[10:], 1)
-	binary.LittleEndian.PutUint16(header[12:], 32)
-	binary.LittleEndian.PutUint32(header[14:], uint32(pngData.Len()))
-	binary.LittleEndian.PutUint32(header[18:], 22)
-	return append(header, pngData.Bytes()...)
 }

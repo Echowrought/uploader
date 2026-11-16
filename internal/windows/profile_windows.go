@@ -12,7 +12,7 @@ import (
 // Only the separate profiling command references this tray.
 func RunProfileTray(ctx context.Context, cancel context.CancelFunc, updates <-chan app.Status) {
 	systray.Run(func() {
-		systray.SetIcon(trayIcon())
+		systray.SetIcon(trayIcon)
 		systray.SetTooltip("CWG RPG profiling: uploads disabled")
 		status := systray.AddMenuItem("Profiling: starting...", "Uploads are disabled")
 		status.Disable()
