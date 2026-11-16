@@ -9,21 +9,41 @@ not an in-app downloader or self-updater.
 
 Download `cwg-rpg-uploader-vX.Y.Z-windows-amd64-setup.exe` from a release.
 
-- Quit every uploader instance in your Windows session before installing,
-  upgrading, or uninstalling. Setup checks the app's existing instance mutex;
-  it does not force-kill uploads or automatically restart the app.
+- During an upgrade, Windows Restart Manager detects the installed tray app
+  using files that need replacement and offers to close it gracefully. Setup
+  does not request forced termination. Close portable/console copies yourself;
+  they may not use files in the installation directory. Quit all uploader
+  instances before uninstalling; uninstall keeps a quit-first mutex check.
 - Setup installs the tray executable and documentation under
   `%LOCALAPPDATA%\Programs\CWGRPGUploader\`, without administrator rights.
-- The Start-menu app shortcut launches tray mode. **Setup itself never
-  launches the uploader.** Starting the app enables normal automatic
-  uploads according to configuration; read the upload notice/README first.
+- Choose a Start-menu folder, or select **Don't create a Start menu folder**.
+  A desktop shortcut is optional and unchecked on first installation.
+- **Start CWG RPG Uploader when I sign in** is optional and unchecked on first
+  installation. On upgrades it reflects the live registration for this
+  installation, including changes made through the tray.
+- **Launch CWG RPG Uploader** on the finish page is checked by default. Uncheck
+  it to leave the app stopped. Starting it enables normal automatic uploads
+  according to configuration; the option explicitly mentions automatic uploads.
+  Silent installation never launches/restarts the app.
 - Upgrades use the same application identity and installation directory.
   Re-run a newer installer to replace the installed program files.
 - Configuration, upload history, and logs stay in `%LOCALAPPDATA%\CWGRPGUploader\`.
   Setup never installs or overwrites these files, and uninstall retains them.
   Game saves are never installed, removed, or modified.
-- Sign-in startup remains controlled by the app's tray, not by setup. If moving
-  from a portable copy, enable startup from the installed copy if desired.
+- Setup and the app's tray use the same current-user startup registry entry,
+  not separate configuration flags. Unchecking startup removes this
+  installation's entry, but leaves an entry for another portable copy alone.
+  Checking startup registers the installed tray app. Windows startup policy may
+  still disable it independently.
+
+An interactive upgrade relaunches through the finish-page option, not through
+Restart Manager, so an unchecked launch option is respected. There is no extra
+updater/replacement helper.
+
+For silent deployments, Inno Setup's `/TASKS` and `/MERGETASKS` options explicitly
+control `desktopicon` and `startup`; an explicit task list takes precedence over
+the startup checkbox's registry-derived default. `/NOICONS` suppresses Start-menu
+shortcuts. Without an explicit task selection, startup reflects its live value.
 
 Use Windows Installed apps or the installed uninstaller to remove the program.
 The uninstaller removes its sign-in startup entry only if it still points to
@@ -83,16 +103,21 @@ installer containers to be byte-identical; compare Go payload executables using
 Before first shipping, exercise these observable behaviors in a disposable
 Windows account/VM, not against a real uploader profile:
 
-1. Install as a standard user; confirm the tray executable, documentation,
-   shortcuts, and uninstall entry exist, console mode is absent, and no uploader
-   process was started.
-2. Install another version; confirm program files change while existing
-   config/history/log contents remain byte-for-byte unchanged.
-3. Keep a fixture process holding `Local\CWGRPGUploader`; confirm setup and
-   uninstall refuse to proceed until it exits, without killing the process.
-4. Uninstall; confirm program files/shortcuts disappear but user data remains.
-5. Check startup cleanup with an entry pointing to this install, and separately
-   with one pointing to another portable copy.
+1. Install as a standard user and exercise Start-menu/desktop choices. Confirm
+   the selected shortcuts and uninstall entry exist and console mode is absent.
+2. Exercise the finish-page launch option with a harmless fixture executable:
+   checked launches once; unchecked and silent installations never launch it.
+3. Upgrade while the installed fixture is running. Confirm Restart Manager
+   requests graceful exit before replacing the executable, then relaunches the
+   new version only when selected. Exercise refusal/failure without force-killing.
+4. Change startup through the fixture's registry entry between installer runs.
+   Confirm upgrades reflect it, Back/Next preserves checkbox edits, explicit
+   `/TASKS` overrides work, and enabling/disabling writes/removes the expected
+   quoted executable path without deleting another portable copy's entry.
+5. Confirm upgrades preserve config/history/log contents byte-for-byte.
+6. Keep a fixture holding `Local\CWGRPGUploader`; confirm uninstall refuses to
+   proceed until it exits. Afterwards confirm program files/shortcuts disappear
+   but user data remains, with startup cleanup limited to this installation.
 
 Do not launch the real uploader during installer tests without explicit upload
 approval. Use harmless fixture executables for installation/process tests.

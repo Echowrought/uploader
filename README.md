@@ -6,7 +6,7 @@ A Windows 10+ system-tray application written in Go. It watches CWG RPG saves an
 
 ## Run
 
-1. Run the Windows installer, then launch **CWG RPG Uploader** from the Start menu. Alternatively, extract the portable tray ZIP to a permanent location and launch `cwg-rpg-uploader.exe`. Setup does not launch the app automatically.
+1. Run the Windows installer and choose shortcuts, sign-in startup, and whether to launch at the end. Alternatively, extract the portable tray ZIP to a permanent location and launch `cwg-rpg-uploader.exe`. See [installer/README.md](installer/README.md) for installer options and upgrade behavior.
 2. Read the upload notice before the first normal run. Console mode prints it; dry runs leave the normal-run notice pending. Look for the uploader in the Windows notification area (possibly under the hidden-icons arrow).
 3. The app finds your Windows Documents folder and watches `Warcraft III\CustomMapData\CWG2`. Usually this is `%USERPROFILE%\Documents\Warcraft III\CustomMapData\CWG2`.
 4. If needed, use **Choose save folder...** in the tray menu. The picker closes when the uploader exits, including forced termination.

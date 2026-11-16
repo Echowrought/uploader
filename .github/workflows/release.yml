@@ -115,7 +115,7 @@ jobs:
         - [Portable Windows tray app]($download/$tray)
         - [Portable Windows console app]($download/$console)
 
-        Quit the uploader before installing or upgrading. Setup installs for the current user without administrator rights and does not launch the app. Start it from the Start menu when ready. Configuration/history are retained on upgrades and uninstall.
+        Setup installs for the current user without administrator rights and offers shortcut and sign-in startup choices. Upgrades use Windows Restart Manager to request graceful closure of the installed app. The final launch option is checked by default; uncheck it to leave the app stopped. Silent setup never launches it. Configuration/history are retained on upgrades and uninstall.
 
         For portable use, extract the ZIP and launch the executable. Starting either app enables automatic save uploads by default; read the included README first. Executables and setup are unsigned, so Windows SmartScreen may display a warning.
 
