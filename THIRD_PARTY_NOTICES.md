@@ -1,6 +1,6 @@
 # Third-party notices
 
-Generated from the Windows build dependencies. Includes the Go runtime license.
+Generated from the target build dependencies. Includes the Go runtime license.
 
 ## Go runtime and standard library
 
