@@ -2,9 +2,7 @@ package saves
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,32 +65,25 @@ func TestScannerRejectsInvalidPolicyBeforeFilesystemAccess(t *testing.T) {
 	}
 }
 
-func TestReadFileEnforcesConfiguredSizeBoundary(t *testing.T) {
-	cases := []struct {
-		name    string
-		size    int
-		want    string
-		wantErr error
-	}{
-		{"exact limit", 64, strings.Repeat("x", 64), nil},
-		{"one over limit", 65, "", ErrSettling},
+func TestScannerAcceptsConfiguredFileSizeLimitAndRetainsItForOversizedReplacement(t *testing.T) {
+	folder := fixtureFolder(t)
+	limits := smallLimits()
+	path := filepath.Join(folder, "HERO_01_123.pld")
+	text := strings.Repeat("x", int(limits.FileBytes))
+	writeFixture(t, path, text)
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
+
+	_, _ = scanner.Scan(context.Background(), now)
+	first, firstErr := scanner.Scan(context.Background(), now)
+	writeFixture(t, path, text+"x")
+	fallback, fallbackErr := scanner.Scan(context.Background(), now)
+
+	if firstErr != nil || fallbackErr != nil {
+		t.Fatalf("scan errors: %v, %v", firstErr, fallbackErr)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "save.pld")
-			writeFixture(t, path, strings.Repeat("x", tc.size))
-			info, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			expected := metadata{Size: info.Size(), Modified: info.ModTime()}
-
-			text, readErr := readFile(context.Background(), path, expected, 64)
-
-			if text != tc.want || !errors.Is(readErr, tc.wantErr) {
-				t.Fatalf("read size=%d: text length=%d, error=%v", tc.size, len(text), readErr)
-			}
-		})
+	if first.Files["HERO_01_123.pld"].Text != text || fallback.Fingerprint != first.Fingerprint || len(fallback.Warnings) != 1 || !strings.Contains(fallback.Warnings[0], "64 bytes") {
+		t.Fatal("exact-size file was rejected, truncated, or displaced by its oversized replacement")
 	}
 }
 
@@ -118,10 +109,10 @@ func TestDefaultScannerAcceptsFullSizeFileAndRejectsOversizedReplacement(t *test
 	assertSettledCacheWithinLimits(t, scanner, limits)
 }
 
-func TestScannerDirectoryLimitFailureAfterEarlierBatchReturnsNoSnapshot(t *testing.T) {
+func TestScannerRejectsLargeOverLimitDirectoryWithoutPartialSnapshot(t *testing.T) {
 	folder := fixtureFolder(t)
 	limits := smallLimits()
-	limits.DirectoryEntries = directoryBatchSize
+	limits.DirectoryEntries = 300
 	for i := 0; i < limits.DirectoryEntries-3; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
@@ -130,7 +121,7 @@ func TestScannerDirectoryLimitFailureAfterEarlierBatchReturnsNoSnapshot(t *testi
 	snapshot, err := scanner.Scan(context.Background(), time.Now())
 
 	if err == nil || !strings.Contains(err.Error(), "directory entries safety limit") || snapshot.Files != nil || snapshot.Fingerprint != "" {
-		t.Fatalf("later directory batch published partial data: %v", err)
+		t.Fatalf("over-limit directory published partial data: %v", err)
 	}
 }
 

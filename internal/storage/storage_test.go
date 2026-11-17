@@ -41,7 +41,7 @@ func TestConfigPersistsUserSettings(t *testing.T) {
 	}
 }
 
-func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
+func TestLoadConfigRejectsInvalidSettings(t *testing.T) {
 	folder := t.TempDir()
 	cases := []struct {
 		name   string
@@ -65,10 +65,33 @@ func TestConfigLoadingAndSavingRejectInvalidSettings(t *testing.T) {
 			}
 
 			_, _, loadErr := LoadConfig(dir, configDefault("unused"))
-			saveErr := SaveConfig(t.TempDir(), tc.config)
 
-			if loadErr == nil || saveErr == nil {
-				t.Fatalf("invalid settings accepted: load=%v, save=%v", loadErr, saveErr)
+			if loadErr == nil {
+				t.Fatal("invalid settings accepted while loading")
+			}
+		})
+	}
+}
+
+func TestSaveConfigRejectsInvalidSettings(t *testing.T) {
+	folder := t.TempDir()
+	for _, tc := range []struct {
+		name   string
+		config Config
+	}{
+		{"zero interval", Config{SaveFolder: folder, PollSeconds: 0}},
+		{"negative interval", Config{SaveFolder: folder, PollSeconds: -1}},
+		{"excessive interval", Config{SaveFolder: folder, PollSeconds: 3601}},
+		{"empty folder", Config{PollSeconds: 5}},
+		{"relative folder", Config{SaveFolder: "relative", PollSeconds: 5}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			saveErr := SaveConfig(dir, tc.config)
+
+			if saveErr == nil {
+				t.Fatal("invalid settings accepted while saving")
 			}
 		})
 	}
@@ -264,7 +287,7 @@ func TestLoadUploadStateRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
-func TestUploadStateLoadingAndSavingRejectInvalidHistory(t *testing.T) {
+func TestLoadUploadStateRejectsInvalidHistory(t *testing.T) {
 	cases := []struct {
 		name       string
 		invalidate func(*UploadState)
@@ -286,23 +309,50 @@ func TestUploadStateLoadingAndSavingRejectInvalidHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			loadDir, saveDir := t.TempDir(), t.TempDir()
-			if err := os.WriteFile(filepath.Join(loadDir, "state.json"), data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := SaveUploadState(saveDir, previous); err != nil {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "state.json"), data, 0600); err != nil {
 				t.Fatal(err)
 			}
 
-			_, loadErr := LoadUploadState(loadDir)
-			saveErr := SaveUploadState(saveDir, candidate)
-			got, recoveryErr := LoadUploadState(saveDir)
+			_, loadErr := LoadUploadState(dir)
 
-			if loadErr == nil || saveErr == nil {
-				t.Fatalf("invalid history accepted: load=%v, save=%v", loadErr, saveErr)
+			if loadErr == nil {
+				t.Fatal("invalid history accepted while loading")
 			}
-			if recoveryErr != nil || got != previous {
-				t.Fatalf("invalid candidate replaced history: state=%+v, error=%v", got, recoveryErr)
+		})
+	}
+}
+
+func TestSaveUploadStateRejectsInvalidHistoryWithoutReplacingPreviousState(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		invalidate func(*UploadState)
+	}{
+		{"missing folder", func(state *UploadState) { state.SaveFolder = "" }},
+		{"missing destination", func(state *UploadState) { state.Destination = "" }},
+		{"missing fingerprint", func(state *UploadState) { state.Fingerprint = "" }},
+		{"missing timestamp", func(state *UploadState) { state.UploadedAt = time.Time{} }},
+		{"missing player", func(state *UploadState) { state.Player = "" }},
+		{"zero heroes", func(state *UploadState) { state.Heroes = 0 }},
+		{"negative heroes", func(state *UploadState) { state.Heroes = -1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			previous := UploadState{SaveFolder: "saves", Destination: "server", Fingerprint: "existing", UploadedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Player: "Player", Heroes: 2}
+			candidate := previous
+			tc.invalidate(&candidate)
+			if err := SaveUploadState(dir, previous); err != nil {
+				t.Fatal(err)
+			}
+
+			saveErr := SaveUploadState(dir, candidate)
+			got, loadErr := LoadUploadState(dir)
+
+			if saveErr == nil || loadErr != nil {
+				t.Fatalf("save=%v load=%v", saveErr, loadErr)
+			}
+			if got != previous {
+				t.Fatalf("invalid candidate replaced previous history: %+v", got)
 			}
 		})
 	}
@@ -314,6 +364,8 @@ func TestLogRotatesWithoutExternalMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer writer.Close()
+
 	writer.max = 4
 	writer.backups = 2
 
@@ -322,22 +374,16 @@ func TestLogRotatesWithoutExternalMaintenance(t *testing.T) {
 	_, thirdErr := writer.Write([]byte("3333"))
 	_, fourthErr := writer.Write([]byte("4444"))
 	closeErr := writer.Close()
-	current, readErr := os.ReadFile(filepath.Join(dir, "uploader.log"))
-	previous, previousErr := os.ReadFile(filepath.Join(dir, "uploader.log.1"))
-	oldest, oldestErr := os.ReadFile(filepath.Join(dir, "uploader.log.2"))
-	_, extraErr := os.Stat(filepath.Join(dir, "uploader.log.3"))
 
-	for _, err := range []error{firstErr, secondErr, thirdErr, fourthErr, closeErr, readErr, previousErr, oldestErr} {
+	for _, err := range []error{firstErr, secondErr, thirdErr, fourthErr, closeErr} {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if string(current) != "4444" || string(previous) != "3333" || string(oldest) != "2222" {
-		t.Fatal("incorrect log rotation")
-	}
-	if !os.IsNotExist(extraErr) {
-		t.Fatal("too many backups")
-	}
+	assertLogContents(t, filepath.Join(dir, "uploader.log"), map[string]string{
+		"": "4444", ".1": "3333", ".2": "2222",
+	})
+	assertLogDirectory(t, dir, 2)
 }
 
 func TestLogCapsEntriesWithoutShortWritesOrChangingInput(t *testing.T) {
@@ -414,6 +460,7 @@ func TestLogDoesNotRotateWhenTruncatedEntryFits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
+	writer.max = (256 << 10) + int64(len("previous\n"))
 	if _, err := writer.Write([]byte("previous\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +505,7 @@ func TestLogRotatesUsingTruncatedEntrySize(t *testing.T) {
 		t.Fatalf("errors: write=%v, close=%v, read=%v, previous=%v", writeErr, closeErr, readErr, previousErr)
 	}
 	if n != len(entry) || len(logged) != 256<<10 || string(previous) != "previous\n" {
-		t.Fatalf("incorrect rotation: n=%d, current length=%d, previous=%q", n, len(logged), previous)
+		t.Fatalf("incorrect rotation: n=%d, current length=%d, previous length=%d", n, len(logged), len(previous))
 	}
 	if !os.IsNotExist(extraErr) {
 		t.Fatal("oversized entry caused extra rotation")

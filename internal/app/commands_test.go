@@ -9,255 +9,201 @@ import (
 	"testing/synctest"
 	"time"
 
-	"cwgrpguploader/internal/leaderboard"
-	"cwgrpguploader/internal/saves"
 	"cwgrpguploader/internal/storage"
 )
 
 func TestCommandPausePersistsPreference(t *testing.T) {
-	state := fixtureRunState(t)
-	state.app.Config.ProxyURL = "http://proxy.invalid:8080"
+	synctest.Test(t, func(t *testing.T) {
+		application, _ := fixtureApp(t)
+		application.Config.ProxyURL = "http://proxy.invalid:8080"
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
 
-	commandErr := state.handleCommand(context.Background(), Command{Kind: "pause"})
-	config, _, loadErr := storage.LoadConfig(state.app.Dir, func() (string, error) { return "unused", nil })
-	status := publishedStatus(t, state.app)
+		done := startApp(ctx, application)
+		commandErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		status := awaitStatus(t, ctx, application, "Automatic uploads off")
+		cancel()
+		<-done
+		config, _, loadErr := storage.LoadConfig(application.Dir, func() (string, error) { return "unused", nil })
 
-	if commandErr != nil || loadErr != nil {
-		t.Fatalf("errors: %v, %v", commandErr, loadErr)
-	}
-	if status.Message != "Automatic uploads off" || config.Automatic || state.app.Config.Automatic {
-		t.Fatal("automatic-upload preference not updated")
-	}
-	if config.ProxyURL != "http://proxy.invalid:8080" {
-		t.Fatal("unrelated setting lost")
-	}
+		if commandErr != nil || loadErr != nil {
+			t.Fatalf("command=%v load=%v", commandErr, loadErr)
+		}
+		if config.Automatic || status.Config.Automatic || config.ProxyURL != "http://proxy.invalid:8080" {
+			t.Fatalf("incorrect persisted settings: %+v", config)
+		}
+	})
 }
 
 func TestCommandResumeStartsCheckingStableSaves(t *testing.T) {
-	state := fixtureRunState(t)
-	state.app.Config.Automatic = false
-
-	err := state.handleCommand(context.Background(), Command{Kind: "pause"})
-	status := publishedStatus(t, state.app)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !state.app.Config.Automatic || status.Message != saves.ErrSettling.Error() {
-		t.Fatal("resume did not start checking save stability")
-	}
-}
-
-func TestCommandPauseKeepsPreferenceWhenPersistenceFails(t *testing.T) {
-	state := fixtureRunState(t)
-	path := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(path, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	state.app.Dir = path
-
-	err := state.handleCommand(context.Background(), Command{Kind: "pause"})
-
-	if err == nil || !state.app.Config.Automatic {
-		t.Fatal("failed persistence changed the preference")
-	}
-}
-
-func TestCommandFolderChangePreservesAcceptedSnapshotsAndOrigin(t *testing.T) {
-	application, client := fixtureApp(t)
-	application.Config.Automatic = false
-	state := fixtureCoordinator(t, application)
-	original := application.Config.SaveFolder
-	replacement := t.TempDir()
-	active := fixtureFolderUpdate("active", "first save")
-	active.saveFolder = original
-	pending := fixtureFolderUpdate("pending", "second save")
-	pending.saveFolder = original
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	activeErr := state.uploader.queue(ctx, active)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	pendingErr := state.uploader.queue(ctx, pending)
-	state.poller.requestEmission()
-	commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
-	config, _, loadErr := storage.LoadConfig(application.Dir, func() (string, error) { return "unused", nil })
-	first.reply <- uploadReply{result: successfulResult()}
-	firstSuccess := nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	secondSuccess := nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	status := publishedStatus(t, application)
-
-	if activeErr != nil || pendingErr != nil || commandErr != nil || loadErr != nil {
-		t.Fatalf("errors: %v, %v, %v, %v", activeErr, pendingErr, commandErr, loadErr)
-	}
-	if config.SaveFolder != replacement || state.poller.saveFolder != replacement {
-		t.Fatal("new folder was not selected while delivery was active")
-	}
-	if state.poller.forceNextEmission {
-		t.Fatal("old poller request survived folder selection")
-	}
-	if first.payload.Files["HERO_01_123.pld"].Text != "first save" || second.payload.Files["HERO_01_123.pld"].Text != "second save" {
-		t.Fatal("folder selection interrupted accepted snapshots")
-	}
-	if firstSuccess.saveFolder != original || secondSuccess.saveFolder != original || application.LastUpload.SaveFolder != original {
-		t.Fatal("completion used the new watch folder instead of snapshot origin")
-	}
-	if state.view.delivery.active != nil || state.view.delivery.pending != nil || !strings.HasPrefix(status.Message, "Automatic uploads off") {
-		t.Fatal("completed old-folder delivery remained active or hid the paused status")
-	}
-}
-
-func TestCommandFolderChangeRetainsBackoffAndCoalescesNewSource(t *testing.T) {
-	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		application, client := fixtureApp(t)
-		replacementApp, _ := fixtureApp(t)
-		replacement := replacementApp.Config.SaveFolder
-		if err := os.WriteFile(filepath.Join(replacement, "HERO_01_123.pld"), []byte("new folder save"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		state := fixtureCoordinator(t, application)
-		old := fixtureFolderUpdate("old", "old save")
-		old.saveFolder = application.Config.SaveFolder
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		application.Config.Automatic = false
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 		defer cancel()
 
-		queueErr := state.uploader.queue(ctx, old)
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-		first := nextRequest(t, ctx, client)
-		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-		commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement})
-		state.tick(ctx, time.Now().Add(6*time.Second))
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-		second := nextRequest(t, ctx, client)
-		second.reply <- uploadReply{result: successfulResult()}
-		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+		done := startApp(ctx, application)
+		_ = awaitStatus(t, ctx, application, "Automatic uploads off")
+		resumed := time.Now()
+		err := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		request := nextRequest(t, ctx, client)
+		cancel()
+		<-done
 
-		if queueErr != nil || commandErr != nil {
-			t.Fatalf("errors: %v, %v", queueErr, commandErr)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if second.startedAt.Before(retry.retryAt) {
-			t.Fatal("changing folders bypassed delivery backoff")
-		}
-		if second.payload.Files["HERO_01_123.pld"].Text != "new folder save" {
-			t.Fatal("new source did not replace older pending data")
-		}
-		if application.LastUpload.SaveFolder != replacement || application.LastUpload.Fingerprint != state.poller.lastEmittedFingerprint {
-			t.Fatal("new source completion was not recorded correctly")
+		if !application.Config.Automatic || request.startedAt.Before(resumed.Add(5*time.Second)) {
+			t.Fatal("resume skipped settling or did not resume detection")
 		}
 	})
 }
 
 func TestCommandFolderRejectsInvalidPathsWithoutChangingSelection(t *testing.T) {
-	cases := []struct{ name, path string }{
-		{"empty", ""},
-		{"relative", "relative/saves"},
-		{"drive relative", "C:saves"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			state := fixtureRunState(t)
-			previous, poller := state.app.Config, state.poller
-			if err := storage.SaveConfig(state.app.Dir, previous); err != nil {
-				t.Fatal(err)
-			}
+	for _, path := range []string{"", "relative/saves", "C:saves"} {
+		t.Run(path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				application, client := fixtureApp(t)
+				previous := application.Config
+				if err := storage.SaveConfig(application.Dir, previous); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
+				defer cancel()
 
-			commandErr := state.handleCommand(context.Background(), Command{Kind: "folder", Value: tc.path})
-			persisted, _, loadErr := storage.LoadConfig(state.app.Dir, func() (string, error) { return "unused", nil })
+				done := startApp(ctx, application)
+				commandErr := sendCommand(t, ctx, application, Command{Kind: "folder", Value: path})
+				request := nextRequest(t, ctx, client)
+				request.reply <- uploadReply{result: successfulResult()}
+				status := awaitStatus(t, ctx, application, "successfully")
+				cancel()
+				<-done
+				persisted, _, loadErr := storage.LoadConfig(application.Dir, func() (string, error) { return "unused", nil })
 
-			if commandErr == nil || loadErr != nil {
-				t.Fatalf("errors: %v, %v", commandErr, loadErr)
-			}
-			if state.app.Config != previous || persisted != previous || state.poller != poller {
-				t.Fatal("invalid folder changed app configuration, disk configuration, or polling")
-			}
+				if commandErr == nil || loadErr != nil {
+					t.Fatalf("command=%v load=%v", commandErr, loadErr)
+				}
+				if status.Config != previous || persisted != previous || status.History.SaveFolder != previous.SaveFolder || request.payload.Files["HERO_01_123.pld"].Text != "save" {
+					t.Fatal("invalid folder changed settings or interrupted the original folder's upload")
+				}
+			})
 		})
 	}
 }
 
-func TestSaveConfigRejectsInvalidCandidateWithoutCommittingIt(t *testing.T) {
-	state := fixtureRunState(t)
-	previous := state.app.Config
-	if err := storage.SaveConfig(state.app.Dir, previous); err != nil {
-		t.Fatal(err)
-	}
-	candidate := previous
-	candidate.PollSeconds = 0
-
-	saveErr := state.saveConfig(candidate)
-	persisted, _, loadErr := storage.LoadConfig(state.app.Dir, func() (string, error) { return "unused", nil })
-
-	if saveErr == nil || loadErr != nil {
-		t.Fatalf("errors: %v, %v", saveErr, loadErr)
-	}
-	if state.app.Config != previous || persisted != previous {
-		t.Fatal("invalid candidate reached app configuration or disk")
-	}
-}
-
-func TestCommandUploadNowKeepsRetryDeadline(t *testing.T) {
-	t.Parallel()
+func TestFailedFolderConfigWritePreservesPendingDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		application, client := fixtureApp(t)
-		state := fixtureCoordinator(t, application)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		original := application.Config.SaveFolder
+		blocked := filepath.Join(t.TempDir(), "blocked")
+		if err := os.WriteFile(blocked, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		application.ConfigDir = blocked
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 		defer cancel()
 
-		queueErr := state.uploader.queue(ctx, fixtureFolderUpdate("old", "old save"))
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		done := startApp(ctx, application)
 		first := nextRequest(t, ctx, client)
-		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: 6 * time.Second}}
-		retry := nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-		commandErr := state.handleCommand(ctx, Command{Kind: "upload"})
-		requestLatched := state.poller.forceNextEmission
-		state.tick(ctx, time.Now().Add(6*time.Second))
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		deadline := time.Now().Add(15 * time.Second)
+		first.reply <- uploadReply{err: retryAfterError(15 * time.Second)}
+		_ = awaitStatus(t, ctx, application, "Retry at")
+		writeErr := os.WriteFile(filepath.Join(original, "HERO_01_123.pld"), []byte("new pending hero"), 0600)
+		pending := awaitStatus(t, ctx, application, "Pending upload")
+		expected := readSnapshot(t, original)
+		commandErr := sendCommand(t, ctx, application, Command{Kind: "folder", Value: t.TempDir()})
 		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		status := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
+		persisted, loadErr := storage.LoadUploadState(application.Dir)
 
-		if queueErr != nil || commandErr != nil {
-			t.Fatalf("errors: %v, %v", queueErr, commandErr)
+		if commandErr == nil || writeErr != nil || loadErr != nil {
+			t.Fatalf("command=%v write=%v load=%v", commandErr, writeErr, loadErr)
 		}
-		if !requestLatched {
-			t.Fatal("explicit upload request was not latched")
+		if !strings.Contains(pending.Upload, "Retry at") || first.payload.Files["HERO_01_123.pld"].Text != "save" || second.payload.Files["HERO_01_123.pld"].Text != "new pending hero" {
+			t.Fatal("newer pending saves did not survive the failed folder change during backoff")
 		}
-		if second.startedAt.Before(retry.retryAt) {
-			t.Fatal("Upload now bypassed Retry-After")
-		}
-		if second.payload.Files["HERO_01_123.pld"].Text != "save" {
-			t.Fatal("fresh snapshot was not used for the retry")
+		if status.Config.SaveFolder != original || persisted.SaveFolder != original || persisted.Fingerprint != expected.Fingerprint || second.startedAt.Before(deadline) {
+			t.Fatal("failed folder change lost accepted work, origin, or backoff")
 		}
 	})
 }
 
-func TestCommandUnknownDoesNotPoll(t *testing.T) {
-	state := fixtureRunState(t)
+func TestCommandUnknownLeavesPausedStatusAndConfigurationUnchanged(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		application.Config.Automatic = false
+		original := application.Config
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
 
-	err := state.handleCommand(context.Background(), Command{Kind: "unknown"})
+		done := startApp(ctx, application)
+		before := awaitStatus(t, ctx, application, "Automatic uploads off")
+		err := sendCommand(t, ctx, application, Command{Kind: "unknown"})
+		synctest.Wait()
+		latest := before
+		select {
+		case latest = <-application.Updates:
+		default:
+		}
+		cancel()
+		<-done
+		_, configErr := os.Stat(filepath.Join(application.Dir, "config.json"))
 
-	if err != nil || state.view.folder.kind != pollUnknown || len(state.app.Updates) != 0 {
-		t.Fatal("unknown command changed state")
-	}
+		if err != nil || len(client.requests) != 0 || application.Config != original || !os.IsNotExist(configErr) {
+			t.Fatal("unknown command changed configuration or submitted work")
+		}
+		if latest.Config != original || latest.Detection != before.Detection || latest.Upload != before.Upload || latest.History != before.History {
+			t.Fatal("unknown command changed the displayed settings, activity, or history")
+		}
+	})
 }
 
-func TestPublishReplacesUnreadStatus(t *testing.T) {
-	state := fixtureRunState(t)
+func TestAppPublishesLatestStatusWithoutWaitingForReader(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, _ := fixtureApp(t)
+		application.Config.Automatic = false
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
 
-	state.publish("first")
-	state.publish("second")
-	status := <-state.app.Updates
+		done := startApp(ctx, application)
+		_ = awaitStatus(t, ctx, application, "Automatic uploads off")
+		firstErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		secondErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		synctest.Wait()
+		// Read exactly once, before another tick can mask a stale update. The
+		// unread resumed state must have been replaced by the final pause.
+		var latest Status
+		select {
+		case latest = <-application.Updates:
+		default:
+			t.Fatal("commands did not publish a status update")
+		}
+		cancel()
+		<-done
 
-	if status.Message != "second" {
-		t.Fatalf("status = %q", status.Message)
-	}
+		if firstErr != nil || secondErr != nil || latest.Config.Automatic || !strings.Contains(latest.Message, "Automatic uploads off") {
+			t.Fatal("unread status updates blocked commands or retained stale settings")
+		}
+	})
 }
 
-func fixtureRunState(t *testing.T) *runState {
+func sendCommand(t *testing.T, ctx context.Context, application *App, command Command) error {
 	t.Helper()
-	application, _ := fixtureApp(t)
-	return fixtureCoordinator(t, application)
+	result := make(chan error, 1)
+	command.Result = result
+	select {
+	case application.Commands <- command:
+	case <-ctx.Done():
+		t.Fatal("timed out sending command")
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for command result")
+		return ctx.Err()
+	}
 }

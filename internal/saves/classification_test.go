@@ -10,7 +10,7 @@ import (
 )
 
 func TestEssentialClassifiesKnownCategories(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		name string
 		want bool
 	}{
@@ -29,8 +29,7 @@ func TestEssentialClassifiesKnownCategories(t *testing.T) {
 		{"MISC_player.pld", false},
 		{"SETTINGSOTHER_player.pld", false},
 		{"PRIVATE_DATA.pld", false},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := essential(tc.name)
 
@@ -43,6 +42,9 @@ func TestEssentialClassifiesKnownCategories(t *testing.T) {
 
 func TestScannerKnownCategoryWithoutSettledVersionBlocksSnapshot(t *testing.T) {
 	for _, name := range []string{
+		"HERO_extra.pld", "ACCOUNT_extra.pld",
+		"hero_extra.PLD", "account_extra.PLD", "account_verify_extra.PLD",
+		"entitlements_extra.PLD", "settings_extra.PLD", "legacy_extra.PLD",
 		"ACCOUNT_VERIFY_123.pld",
 		"ENTITLEMENTS_player_123.pld",
 		"SETTINGS_player.pld",

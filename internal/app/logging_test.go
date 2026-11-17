@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -13,90 +14,88 @@ import (
 )
 
 func TestWorkLogContextPersistsAcrossRetriesAndChangesForNewEmissions(t *testing.T) {
-	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		application, client := fixtureApp(t)
 		var logs bytes.Buffer
 		application.Logger = log.New(&logs, "", 0)
-		state := fixtureCoordinator(t, application)
-		update := fixtureFolderUpdate("same", "save")
-		update.saveFolder = application.Config.SaveFolder
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 		defer cancel()
 
-		state.forwardSnapshot(ctx, update)
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		done := startApp(ctx, application)
 		first := nextRequest(t, ctx, client)
 		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "temporary failure", Retry: true, Body: "retry\nlater"}}
-		_ = nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
 		retry := nextRequest(t, ctx, client)
 		retry.reply <- uploadReply{result: successfulResult()}
-		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-		state.forwardSnapshot(ctx, update)
-		_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
+		_ = awaitStatus(t, ctx, application, "successfully")
+		err := sendCommand(t, ctx, application, Command{Kind: "upload"})
 		second := nextRequest(t, ctx, client)
 		second.reply <- uploadReply{result: successfulResult()}
-		_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-		state.shutdownUploader()
+		_ = awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
 		output := logs.String()
+		accepted := regexp.MustCompile(`\[app\] work_id=(\S+) snapshot accepted: 2 eligible files`).FindAllStringSubmatch(output, -1)
 
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(accepted) != 2 || accepted[0][1] == accepted[1][1] {
+			t.Fatalf("work IDs missing or reused: %s", output)
+		}
+		originalID, newID := accepted[0][1], accepted[1][1]
 		for _, want := range []string{
-			"[app] work_id=1 snapshot accepted: 1 eligible files",
-			"[uploader] work_id=1 upload failed: temporary failure",
-			`[uploader] work_id=1 Upload error response body: "retry\nlater"`,
-			"[uploader] work_id=1 retry scheduled at ",
-			"[uploader] work_id=1 upload succeeded: 1 heroes",
-			"[app] work_id=2 snapshot accepted: 1 eligible files",
-			"[uploader] work_id=2 upload started: 1 eligible files",
-			"[uploader] work_id=2 upload succeeded: 1 heroes",
+			"[uploader] work_id=" + originalID + " upload failed: temporary failure",
+			"[uploader] work_id=" + originalID + ` Upload error response body: "retry\nlater"`,
+			"[uploader] work_id=" + originalID + " retry scheduled at ",
+			"[uploader] work_id=" + originalID + " upload succeeded: 1 heroes",
+			"[uploader] work_id=" + newID + " upload started: 2 eligible files",
+			"[uploader] work_id=" + newID + " upload succeeded: 1 heroes",
 		} {
 			if !strings.Contains(output, want) {
-				t.Errorf("missing log context %q in:\n%s", want, output)
+				t.Errorf("missing %q in:\n%s", want, output)
 			}
 		}
-		if count := strings.Count(output, "[uploader] work_id=1 upload started:"); count != 2 {
-			t.Errorf("original attempt and retry should share work_id=1; got %d attempts", count)
+		if strings.Count(output, "[uploader] work_id="+originalID+" upload started:") != 2 {
+			t.Fatal("retry did not share the original correlation ID")
 		}
 	})
 }
 
 func TestWorkLogContextIncludesDryRunPreview(t *testing.T) {
-	application, _ := fixtureApp(t)
-	application.DryRun = true
-	var logs bytes.Buffer
-	application.Logger = log.New(&logs, "", 0)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("preview", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, _ := fixtureApp(t)
+		application.DryRun = true
+		var logs bytes.Buffer
+		application.Logger = log.New(&logs, "", 0)
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	_ = nextCoordinatorEvent[uploadPreviewed](t, ctx, state)
-	state.shutdownUploader()
+		done := startApp(ctx, application)
+		_ = awaitStatus(t, ctx, application, "Dry run:")
+		cancel()
+		<-done
 
-	if !strings.Contains(logs.String(), "[uploader] work_id=1 dry-run snapshot prepared: 1 eligible files") {
-		t.Fatalf("preview log lost its work context:\n%s", logs.String())
-	}
+		if !regexp.MustCompile(`\[uploader\] work_id=\S+ dry-run snapshot prepared: 2 eligible files`).MatchString(logs.String()) {
+			t.Fatalf("preview lost work context: %s", logs.String())
+		}
+	})
 }
 
 func TestWorkLogContextIncludesCancelledUpload(t *testing.T) {
-	application, client := fixtureApp(t)
-	var logs bytes.Buffer
-	application.Logger = log.New(&logs, "", 0)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("cancelled", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		var logs bytes.Buffer
+		application.Logger = log.New(&logs, "", 0)
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	_ = nextRequest(t, ctx, client)
-	state.shutdownUploader()
+		done := startApp(ctx, application)
+		_ = nextRequest(t, ctx, client)
+		cancel()
+		<-done
 
-	if !strings.Contains(logs.String(), "[uploader] work_id=1 upload stopped: context canceled") {
-		t.Fatalf("cancellation log lost its work context:\n%s", logs.String())
-	}
+		if !regexp.MustCompile(`\[uploader\] work_id=\S+ upload stopped: context canceled`).MatchString(logs.String()) {
+			t.Fatalf("cancellation lost work context: %s", logs.String())
+		}
+	})
 }
