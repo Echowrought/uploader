@@ -73,24 +73,32 @@ func TestLinuxConsoleDryRunInspectsWithoutUploadingOrAcknowledgingNotice(t *test
 	}
 }
 
-func TestLinuxConsoleRejectsSecondInstanceAndStopsOnSIGTERM(t *testing.T) {
+func TestLinuxConsoleRejectsSecondInstance(t *testing.T) {
 	t.Parallel()
 	root, _ := consoleFixture(t)
-	command := runningConsole(t, root)
+	_ = runningConsole(t, root)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	second := consoleCommand(t, ctx, root, "--dry-run")
 
 	output, secondErr := second.CombinedOutput()
+
+	if secondErr == nil || !strings.Contains(string(output), "already running") {
+		t.Fatalf("second instance: %v %s", secondErr, output)
+	}
+}
+
+func TestLinuxConsoleStopsOnSIGTERMAndReleasesLock(t *testing.T) {
+	t.Parallel()
+	root, _ := consoleFixture(t)
+	command := runningConsole(t, root)
+
 	signalErr := command.Process.Signal(syscall.SIGTERM)
 	waitErr := command.Wait()
 	release, lockErr := platform.SingleInstance(filepath.Join(root, "state", "cwg-rpg-uploader"))
 
 	if release != nil {
 		defer release()
-	}
-	if secondErr == nil || !strings.Contains(string(output), "already running") {
-		t.Fatalf("second instance: %v %s", secondErr, output)
 	}
 	if signalErr != nil || waitErr != nil || lockErr != nil {
 		t.Fatalf("signal=%v exit=%v reacquire=%v", signalErr, waitErr, lockErr)

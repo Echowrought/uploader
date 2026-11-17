@@ -100,6 +100,35 @@ func TestScannerIncludesVerificationAndUnknownPLDFiles(t *testing.T) {
 	}
 }
 
+func TestScannerChecksRequiredNamesBeforeReadingContents(t *testing.T) {
+	folder := fixtureFolder(t)
+	if err := os.Remove(filepath.Join(folder, "ACCOUNT_player_123.pld")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), "\xff")
+	scanner := NewScanner(folder, 0, DefaultLimits())
+
+	snapshot, err := scanner.Scan(t.Context(), time.Now())
+
+	if err == nil || !strings.Contains(err.Error(), "waiting for HERO_ and ACCOUNT_") || snapshot.Files != nil {
+		t.Fatalf("contents took precedence over missing required names: %v", err)
+	}
+}
+
+func TestScannerChecksEssentialCountBeforeReadingContents(t *testing.T) {
+	folder := fixtureFolder(t)
+	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), "\xff")
+	limits := smallLimits()
+	limits.SaveFiles = 1
+	scanner := NewScanner(folder, 0, limits)
+
+	snapshot, err := scanner.Scan(t.Context(), time.Now())
+
+	if err == nil || !strings.Contains(err.Error(), "essential save set exceeds 1 eligible files") || snapshot.Files != nil {
+		t.Fatalf("contents took precedence over essential count validation: %v", err)
+	}
+}
+
 func TestScannerVerificationDoesNotReplaceRequiredAccount(t *testing.T) {
 	folder := fixtureFolder(t)
 	if err := os.Remove(filepath.Join(folder, "ACCOUNT_player_123.pld")); err != nil {
@@ -171,7 +200,7 @@ func TestScannerRejectsInvalidEssentialUTF8WithFilename(t *testing.T) {
 	}
 }
 
-func TestScannerChecksRequiredNamesBeforeReadingContents(t *testing.T) {
+func TestScannerRejectsIncompleteInvalidSavesWithoutPartialSnapshot(t *testing.T) {
 	folder := fixtureFolder(t)
 	if err := os.Remove(filepath.Join(folder, "ACCOUNT_player_123.pld")); err != nil {
 		t.Fatal(err)
@@ -179,10 +208,10 @@ func TestScannerChecksRequiredNamesBeforeReadingContents(t *testing.T) {
 	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), "\xff")
 	scanner := NewScanner(folder, 0, DefaultLimits())
 
-	_, err := scanner.Scan(context.Background(), time.Now())
+	snapshot, err := scanner.Scan(context.Background(), time.Now())
 
-	if err == nil || !strings.Contains(err.Error(), "waiting for HERO_ and ACCOUNT_") {
-		t.Fatalf("scanner read invalid contents before checking the required set: %v", err)
+	if err == nil || errors.Is(err, ErrSettling) || snapshot.Files != nil || snapshot.Fingerprint != "" {
+		t.Fatalf("incomplete invalid saves produced a usable or merely unsettled snapshot: %+v, %v", snapshot, err)
 	}
 }
 
@@ -257,13 +286,7 @@ func TestScannerRejectsSettledEssentialByteOverflow(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "256 bytes") || snapshot.Files != nil {
 		t.Fatalf("settled essential byte overflow returned a partial snapshot: %v", err)
 	}
-	var cached int64
-	for _, state := range scanner.settlements {
-		cached += settledSize(state.settled)
-	}
-	if cached > limits.SnapshotBytes {
-		t.Fatal("over-limit essential versions exceeded the retained cache budget")
-	}
+	assertSettledCacheWithinLimits(t, scanner, limits)
 }
 
 func TestScannerReservesFileBudgetForEssentialFiles(t *testing.T) {

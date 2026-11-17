@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwgrpguploader/internal/buildinfo"
@@ -350,13 +351,13 @@ func TestClientPreservesConnectionError(t *testing.T) {
 	}
 }
 
-func TestResponseExcerpt(t *testing.T) {
+func TestClientQuotesAndBoundsResponseExcerpts(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 		want string
 	}{
-		{"empty", "", "error"},
+		{"empty", "", "upload rejected: HTTP 400"},
 		{"controls", "timeout\nretry\x1b", `error: "timeout\nretry\x1b"`},
 		{"exact limit", strings.Repeat("x", 512), `error: "` + strings.Repeat("x", 512) + `"`},
 		{"over limit", strings.Repeat("x", 513), `error: "` + strings.Repeat("x", 512) + `" … [truncated]`},
@@ -366,23 +367,48 @@ func TestResponseExcerpt(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			message := withResponseExcerpt("error", []byte(tc.body))
+			client := Client{URL: "https://fixture.invalid", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				r.Body.Close()
+				return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}}
+			want := strings.Replace(tc.want, "error:", "upload rejected: HTTP 400:", 1)
 
-			if message != tc.want {
-				t.Fatalf("message = %q; want %q", message, tc.want)
+			_, err := client.Upload(context.Background(), UploadRequest{})
+
+			var uploadError *UploadError
+			if !errors.As(err, &uploadError) || uploadError.Message != want {
+				t.Fatalf("error = %v; want %q", err, want)
 			}
 		})
 	}
 }
 
-func TestRetryAfterParsesHTTPDate(t *testing.T) {
-	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	value := now.Add(time.Minute).Format(http.TimeFormat)
+func TestClientParsesRetryAfterHTTPDate(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value func(time.Time) string
+		want  time.Duration
+	}{
+		{"future", func(now time.Time) string { return now.Add(time.Minute).UTC().Format(http.TimeFormat) }, time.Minute},
+		{"past", func(now time.Time) string { return now.Add(-time.Minute).UTC().Format(http.TimeFormat) }, 0},
+		{"invalid", func(time.Time) string { return "not a date" }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				value := tc.value(time.Now())
+				client := Client{URL: "https://fixture.invalid", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					r.Body.Close()
+					return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {value}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+				})}}
 
-	delay := retryAfter(value, now)
+				_, err := client.Upload(t.Context(), UploadRequest{})
 
-	if delay != time.Minute {
-		t.Fatalf("delay = %s", delay)
+				var uploadError *UploadError
+				if !errors.As(err, &uploadError) || !uploadError.Retry || uploadError.After != tc.want {
+					t.Fatalf("Retry-After classification: %v; want delay %s", err, tc.want)
+				}
+			})
+		})
 	}
 }
 

@@ -8,51 +8,45 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
-
-	"cwgrpguploader/internal/storage"
 )
 
-func TestPollerReportsSupplementaryOmissionsWithoutReemittingCore(t *testing.T) {
-	application, _ := fixtureApp(t)
-	var logs bytes.Buffer
-	poller := newFolderPoller(application.Config.SaveFolder, "", log.New(&logs, "", 0))
-	now := time.Now()
-	path := filepath.Join(application.Config.SaveFolder, "MISC_bad.pld")
+func TestAppReportsSupplementaryWarningsDuringRetryWithoutReemittingCore(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		var logs bytes.Buffer
+		application.Logger = log.New(&logs, "", 0)
+		path := filepath.Join(application.Config.SaveFolder, "MISC_bad.pld")
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+		defer cancel()
 
-	poller.poll(context.Background(), now, true)
-	first := poller.poll(context.Background(), now.Add(5*time.Second), true)
-	writeErr := os.WriteFile(path, []byte{0xff}, 0600)
-	initialWarning := poller.poll(context.Background(), now.Add(6*time.Second), true)
-	invalid := poller.poll(context.Background(), now.Add(11*time.Second), true)
-	repeated := poller.poll(context.Background(), now.Add(16*time.Second), true)
-	removeErr := os.Remove(path)
-	recovered := poller.poll(context.Background(), now.Add(17*time.Second), true)
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: retryAfterError(time.Hour)}
+		_ = awaitStatus(t, ctx, application, "Retry at")
+		writeErr := os.WriteFile(path, []byte{0xff}, 0600)
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		invalid := awaitStatus(t, ctx, application, "Save warnings: 1")
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		removeErr := os.Remove(path)
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		recovered := awaitStatus(t, ctx, application, "Retry at")
+		cancel()
+		<-done
 
-	if writeErr != nil || removeErr != nil {
-		t.Fatalf("errors: %v, %v", writeErr, removeErr)
-	}
-	if first.kind != pollUpdated || initialWarning.kind != pollStable || invalid.kind != pollStable || repeated.kind != pollStable || recovered.kind != pollStable {
-		t.Fatal("supplementary failures prevented delivery or reemitted unchanged core data")
-	}
-	if len(invalid.warnings) != 1 || !strings.Contains(invalid.warnings[0], "MISC_bad.pld") || !strings.Contains(invalid.warnings[0], "UTF-8") || len(recovered.warnings) != 0 {
-		t.Fatal("omission diagnostics were missing or did not recover")
-	}
-	if strings.Count(logs.String(), "save warnings:") != 1 || !strings.Contains(logs.String(), "MISC_bad.pld") {
-		t.Fatalf("unchanged warnings were not deduplicated: %s", logs.String())
-	}
-}
-
-func TestRenderSupplementaryWarningsAlongsideDelivery(t *testing.T) {
-	deadline := time.Date(2026, 1, 1, 12, 34, 56, 0, time.UTC)
-	view := statusView{
-		folder:   pollEvent{kind: pollStable, warnings: []string{"skip supplementary save MISC_bad.pld: invalid UTF-8"}},
-		delivery: deliveryView{active: uploadRetryScheduled{retryAt: deadline}},
-	}
-
-	message := renderStatus(view, storage.UploadState{})
-
-	if message != "No new changes; Retry at 12:34:56; Save warnings: 1 (see logs)" {
-		t.Fatal(message)
-	}
+		if writeErr != nil || removeErr != nil {
+			t.Fatalf("write=%v remove=%v", writeErr, removeErr)
+		}
+		menu := invalid.Menu(time.Now())
+		if !strings.Contains(menu.Detection.Title, "Save warnings: 1") || !strings.Contains(menu.Upload.Title, "Retry at") || recovered.DetectionWarnings != 0 || len(client.requests) != 0 {
+			t.Fatal("warning hid delivery, did not recover, or reemitted unchanged core saves")
+		}
+		if strings.Count(logs.String(), "snapshot accepted:") != 1 || strings.Count(logs.String(), "save warnings:") != 1 || !strings.Contains(logs.String(), "MISC_bad.pld") || !strings.Contains(logs.String(), "UTF-8") {
+			t.Fatalf("warnings/unchanged core were not deduplicated: %s", logs.String())
+		}
+	})
 }

@@ -1,166 +1,104 @@
 package saves
 
 import (
-	"crypto/sha256"
-	"errors"
-	"reflect"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestSettleCandidateTransitions(t *testing.T) {
-	start := time.Unix(1700000000, 0)
-	old := &File{Text: "old", Mtime: 1}
-	current := File{Text: "new", Mtime: 2}
-	hash := sha256.Sum256([]byte(current.Text))
-	oldHash := sha256.Sum256([]byte(old.Text))
-	cases := []struct {
-		name     string
-		previous fileSettlement
-		now      time.Time
-		want     fileSettlement
-	}{
-		{
-			name: "first observation starts the timer",
-			now:  start,
-			want: fileSettlement{hash: hash, since: start, observed: true},
-		},
-		{
-			name:     "matching candidate waits for quiet period",
-			previous: fileSettlement{hash: hash, since: start, observed: true},
-			now:      start.Add(4 * time.Second),
-			want:     fileSettlement{hash: hash, since: start, observed: true},
-		},
-		{
-			name:     "matching candidate settles at quiet boundary",
-			previous: fileSettlement{hash: hash, since: start, observed: true},
-			now:      start.Add(5 * time.Second),
-			want:     fileSettlement{hash: hash, since: start, observed: true, settled: &current},
-		},
-		{
-			name:     "changed candidate restarts timer and retains old version",
-			previous: fileSettlement{hash: oldHash, since: start, observed: true, settled: old},
-			now:      start.Add(5 * time.Second),
-			want:     fileSettlement{hash: hash, since: start.Add(5 * time.Second), observed: true, settled: old},
-		},
-		{
-			name:     "interrupted observation restarts timer",
-			previous: fileSettlement{hash: hash, since: start, observed: false, settled: old},
-			now:      start.Add(5 * time.Second),
-			want:     fileSettlement{hash: hash, since: start.Add(5 * time.Second), observed: true, settled: old},
-		},
-		{
-			name:     "settled replacement uses current metadata",
-			previous: fileSettlement{hash: hash, since: start, observed: true, settled: old},
-			now:      start.Add(5 * time.Second),
-			want:     fileSettlement{hash: hash, since: start, observed: true, settled: &current},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := settle(tc.previous, current, tc.now, 5*time.Second)
-
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("settlement = %+v; want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestSettleKnownVersionRefreshesMetadataWithoutMutatingPreviousVersion(t *testing.T) {
-	start := time.Unix(1700000000, 0)
-	old := &File{Text: "settled", Mtime: 1}
-	previous := fileSettlement{settled: old}
-	current := File{Text: old.Text, Mtime: 2}
-
-	next := settle(previous, current, start, 5*time.Second)
-
-	if next.settled == nil || *next.settled != current || !next.observed || next.since != start || next.hash != sha256.Sum256([]byte(current.Text)) {
-		t.Fatalf("known version was not immediately refreshed: %+v", next)
-	}
-	if *old != (File{Text: "settled", Mtime: 1}) {
-		t.Fatal("refresh mutated the previous settled version")
-	}
-}
-
-func TestAdmissionEssentialReplacementUsesReservedCapacity(t *testing.T) {
+func TestScannerEssentialReplacementReusesSnapshotCapacity(t *testing.T) {
+	folder := fixtureFolder(t)
 	limits := smallLimits()
-	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	candidate := fileSettlement{observed: true, settled: &File{Text: "next", Mtime: 2}}
-	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 1}
+	limits.SnapshotBytes = 24
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
 
-	err := result.admitEssential("HERO_1.pld", previous, candidate, nil)
+	_, _ = scanner.Scan(context.Background(), now)
+	first, firstErr := scanner.Scan(context.Background(), now)
+	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), "twelve bytes")
+	_, _ = scanner.Scan(context.Background(), now)
+	second, secondErr := scanner.Scan(context.Background(), now)
 
-	if err != nil {
-		t.Fatal(err)
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("errors: %v %v", firstErr, secondErr)
 	}
-	if result.bytes != limits.SnapshotBytes || result.files["HERO_1.pld"] != *candidate.settled || result.states["HERO_1.pld"] != candidate || len(result.warnings) != 0 {
-		t.Fatal("essential replacement did not reuse its reserved capacity")
-	}
-}
-
-func TestAdmissionEssentialOverflowRetainsPreviousVersionAndCandidateObservation(t *testing.T) {
-	limits := smallLimits()
-	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	candidate := fileSettlement{hash: sha256.Sum256([]byte("next")), observed: true, settled: &File{Text: "next", Mtime: 2}}
-	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes}
-
-	err := result.admitEssential("HERO_1.pld", previous, candidate, nil)
-	retained := result.states["HERO_1.pld"]
-
-	if err == nil || !strings.Contains(err.Error(), "256 bytes") {
-		t.Fatalf("essential overflow did not block publication: %v", err)
-	}
-	if result.bytes != limits.SnapshotBytes || result.files["HERO_1.pld"] != *previous.settled || retained.settled != previous.settled || retained.hash != candidate.hash || !retained.observed {
-		t.Fatal("overflow lost the old payload or candidate observation, or exceeded capacity")
+	if second.Files["HERO_01_123.pld"].Text != "twelve bytes" || len(second.Warnings) != 0 || first.Files["HERO_01_123.pld"].Text != "hero data!!" {
+		t.Fatal("essential replacement could not reuse capacity or mutated the previous snapshot")
 	}
 }
 
-func TestAdmissionEssentialFailedCandidateRetainsVersionWithWarning(t *testing.T) {
+func TestScannerEssentialOverflowRecoversWithoutRestartingObservedCandidate(t *testing.T) {
+	folder := fixtureFolder(t)
+	extra := filepath.Join(folder, "HERO_extra.pld")
+	writeFixture(t, extra, "four")
 	limits := smallLimits()
-	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: 3}
+	limits.SnapshotBytes = 30
+	scanner := NewScanner(folder, 5*time.Second, limits)
+	now := time.Now()
 
-	err := result.admitEssential("HERO_1.pld", previous, previous, errors.New("read failed"))
+	_, _ = scanner.Scan(context.Background(), now)
+	first, firstErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
+	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), strings.Repeat("x", 15))
+	_, _ = scanner.Scan(context.Background(), now.Add(6*time.Second))
+	blocked, overflowErr := scanner.Scan(context.Background(), now.Add(11*time.Second))
+	removeErr := os.Remove(extra)
+	recovered, recoveredErr := scanner.Scan(context.Background(), now.Add(12*time.Second))
 
-	if err != nil || result.files["HERO_1.pld"] != *previous.settled || result.bytes != 3 {
-		t.Fatal("candidate failure displaced a usable essential version")
+	if firstErr != nil || overflowErr == nil || !strings.Contains(overflowErr.Error(), "30 bytes") || removeErr != nil || recoveredErr != nil {
+		t.Fatalf("errors: %v %v %v %v", firstErr, overflowErr, removeErr, recoveredErr)
 	}
-	if len(result.warnings) != 1 || result.warnings[0] != `use settled save "HERO_1.pld": read failed` {
-		t.Fatalf("missing essential fallback diagnostic: %v", result.warnings)
+	if blocked.Files != nil || recovered.Files["HERO_01_123.pld"].Text != strings.Repeat("x", 15) || first.Files["HERO_01_123.pld"].Text != "hero data!!" {
+		t.Fatal("overflow published partial data, lost candidate observations, or mutated an older snapshot")
 	}
 }
 
-func TestAdmissionSupplementaryReplacementFallsBackWhenPreviousVersionFits(t *testing.T) {
+func TestScannerSupplementaryGrowthFallsBackToFittingSettledVersion(t *testing.T) {
+	folder := fixtureFolder(t)
+	path := filepath.Join(folder, "MISC.pld")
+	writeFixture(t, path, "old")
 	limits := smallLimits()
-	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	candidate := fileSettlement{observed: true, settled: &File{Text: "larger", Mtime: 2}}
-	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 4}
+	limits.SnapshotBytes = 30
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
 
-	result.admitSupplementary("MISC.pld", previous, candidate, nil)
+	_, _ = scanner.Scan(context.Background(), now)
+	first, firstErr := scanner.Scan(context.Background(), now)
+	writeFixture(t, path, "too large")
+	_, _ = scanner.Scan(context.Background(), now)
+	fallback, fallbackErr := scanner.Scan(context.Background(), now)
 
-	if result.bytes != limits.SnapshotBytes-1 || result.files["MISC.pld"] != *previous.settled || result.states["MISC.pld"].settled != previous.settled {
-		t.Fatal("oversized supplementary replacement did not fall back to the fitting version")
+	if firstErr != nil || fallbackErr != nil {
+		t.Fatalf("errors: %v %v", firstErr, fallbackErr)
 	}
-	if len(result.warnings) != 1 || !strings.Contains(result.warnings[0], `use settled save "MISC.pld"`) {
-		t.Fatalf("missing supplementary fallback diagnostic: %v", result.warnings)
+	if fallback.Files["MISC.pld"].Text != "old" || fallback.Fingerprint != first.Fingerprint || len(fallback.Warnings) != 1 || !strings.Contains(fallback.Warnings[0], `use settled save "MISC.pld"`) {
+		t.Fatalf("supplementary growth displaced its fitting fallback: %+v", fallback)
 	}
 }
 
-func TestAdmissionSupplementaryEvictsVersionsWhenNeitherFits(t *testing.T) {
+func TestScannerEssentialGrowthOmitsSupplementaryVersionsThatNoLongerFit(t *testing.T) {
+	folder := fixtureFolder(t)
+	path := filepath.Join(folder, "MISC.pld")
+	writeFixture(t, path, "old")
 	limits := smallLimits()
-	previous := fileSettlement{settled: &File{Text: "old", Mtime: 1}}
-	candidate := fileSettlement{observed: true, settled: &File{Text: "larger", Mtime: 2}}
-	result := scanResult{limits: limits, states: make(map[string]fileSettlement), files: make(map[string]File), bytes: limits.SnapshotBytes - 2}
+	limits.SnapshotBytes = 30
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
 
-	result.admitSupplementary("MISC.pld", previous, candidate, nil)
-	_, included := result.files["MISC.pld"]
+	_, _ = scanner.Scan(context.Background(), now)
+	first, firstErr := scanner.Scan(context.Background(), now)
+	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), strings.Repeat("x", 17))
+	writeFixture(t, path, "larger")
+	_, _ = scanner.Scan(context.Background(), now)
+	second, secondErr := scanner.Scan(context.Background(), now)
+	_, included := second.Files["MISC.pld"]
 
-	if included || result.states["MISC.pld"].settled != nil || !result.states["MISC.pld"].observed || result.bytes != limits.SnapshotBytes-2 {
-		t.Fatal("unfitting optional payload was retained or its observation was lost")
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("errors: %v %v", firstErr, secondErr)
 	}
-	if len(result.warnings) != 1 || !strings.Contains(result.warnings[0], `skip supplementary save "MISC.pld"`) {
-		t.Fatalf("missing supplementary omission diagnostic: %v", result.warnings)
+	if included || second.Files["HERO_01_123.pld"].Text != strings.Repeat("x", 17) || len(second.Warnings) != 1 || !strings.Contains(second.Warnings[0], `skip supplementary save "MISC.pld"`) || first.Files["MISC.pld"].Text != "old" {
+		t.Fatal("unfitting supplementary versions blocked essential growth or mutated previous data")
 	}
 }

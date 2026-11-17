@@ -25,6 +25,8 @@ func TestApplicationRequiresAbsoluteSaveFolder(t *testing.T) {
 	}
 }
 
+// Safety exception: disable the preview guard to exercise the independent
+// network-denial guard without ever contacting a real leaderboard.
 func TestApplicationBlocksNetworkingEvenWithoutDryRun(t *testing.T) {
 	application, err := newApplication(t.TempDir())
 	if err != nil {
@@ -39,7 +41,7 @@ func TestApplicationBlocksNetworkingEvenWithoutDryRun(t *testing.T) {
 	}
 }
 
-func TestCaptureScansWithoutPersistenceAndWritesProfiles(t *testing.T) {
+func TestProfilingAppScansWithoutPersistence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		folder := t.TempDir()
 		for _, name := range []string{"HERO_01_123.pld", "ACCOUNT_player_123.pld"} {
@@ -55,21 +57,23 @@ func TestCaptureScansWithoutPersistenceAndWritesProfiles(t *testing.T) {
 		application.Dir = dir
 		var output bytes.Buffer
 		application.Logger = log.New(&output, "", 0)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
 		done := make(chan struct{})
 
 		go func() { defer close(done); application.Run(ctx) }()
-		err = capture(ctx, dir, 12*time.Second)
+		var message string
+		for !strings.HasPrefix(message, "Dry run:") {
+			select {
+			case status := <-application.Updates:
+				message = status.Message
+			case <-ctx.Done():
+				t.Fatal("profiling app did not prepare a preview")
+			}
+		}
 		cancel()
 		<-done
 
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !application.DryRun || !application.Config.Automatic || application.Commands != nil {
-			t.Fatal("profiling must scan automatically with dry run and no command input")
-		}
 		if !strings.Contains(output.String(), "dry-run snapshot prepared: 2 eligible files") {
 			t.Fatalf("scanner did not prepare a settled snapshot:\n%s", output.String())
 		}
@@ -77,6 +81,20 @@ func TestCaptureScansWithoutPersistenceAndWritesProfiles(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("unexpected persistence for %s: %v", name, err)
 			}
+		}
+	})
+}
+
+func TestCaptureWritesProfiles(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+
+		err := capture(ctx, dir, 12*time.Second)
+
+		if err != nil {
+			t.Fatal(err)
 		}
 		for _, stage := range []string{"before-gc", "after-gc", "after-release"} {
 			data, err := os.ReadFile(filepath.Join(dir, stage+".json"))

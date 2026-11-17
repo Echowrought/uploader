@@ -185,6 +185,9 @@ func TestScannerFingerprintIgnoresModificationTime(t *testing.T) {
 	if first.Fingerprint != second.Fingerprint {
 		t.Fatal("timestamp-only change altered the fingerprint")
 	}
+	if first.Files["HERO_01_123.pld"].Mtime != 1700000000123 {
+		t.Fatal("metadata refresh mutated the previous snapshot")
+	}
 	if second.Files["HERO_01_123.pld"].Mtime != timestamp.UnixMilli() {
 		t.Fatal("upload payload must retain the updated modification time")
 	}
@@ -192,7 +195,8 @@ func TestScannerFingerprintIgnoresModificationTime(t *testing.T) {
 
 func TestScannerReadsMultipleDirectoryBatches(t *testing.T) {
 	folder := fixtureFolder(t)
-	for i := directoryBatchSize; i > 0; i-- {
+	const count = directoryBatchSize + 1
+	for i := count; i > 0; i-- {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "save")
 	}
 	scanner := NewScanner(folder, 0, DefaultLimits())
@@ -204,43 +208,50 @@ func TestScannerReadsMultipleDirectoryBatches(t *testing.T) {
 	if !errors.Is(firstErr, ErrSettling) || err != nil {
 		t.Fatalf("scan errors: %v, %v", firstErr, err)
 	}
-	if len(snapshot.Files) != directoryBatchSize+2 {
-		t.Fatalf("got %d files; want %d", len(snapshot.Files), directoryBatchSize+2)
+	if len(snapshot.Files) != count+2 {
+		t.Fatalf("got %d files; want %d", len(snapshot.Files), count+2)
 	}
 }
 
-func TestInventorySortsMetadataAcrossBatches(t *testing.T) {
-	folder := t.TempDir()
-	for i := directoryBatchSize + 1; i > 0; i-- {
-		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "save")
+func TestScannerSelectsDeterministicSupplementarySubsetAcrossDirectoryBatches(t *testing.T) {
+	firstFolder, secondFolder := fixtureFolder(t), fixtureFolder(t)
+	const count = directoryBatchSize + 1
+	for i := 0; i < count; i++ {
+		writeFixture(t, filepath.Join(firstFolder, fmt.Sprintf("MISC_%04d.pld", i)), "save")
+		writeFixture(t, filepath.Join(secondFolder, fmt.Sprintf("MISC_%04d.pld", count-1-i)), "save")
 	}
+	limits := DefaultLimits()
+	limits.SaveFiles = 4
+	firstScanner, secondScanner := NewScanner(firstFolder, 0, limits), NewScanner(secondFolder, 0, limits)
+	now := time.Now()
 
-	entries, err := inventory(context.Background(), folder, DefaultLimits().DirectoryEntries)
+	_, _ = firstScanner.Scan(context.Background(), now)
+	_, _ = secondScanner.Scan(context.Background(), now)
+	first, firstErr := firstScanner.Scan(context.Background(), now)
+	second, secondErr := secondScanner.Scan(context.Background(), now)
 
-	if err != nil {
-		t.Fatal(err)
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("scan errors: %v, %v", firstErr, secondErr)
 	}
-	if len(entries) != directoryBatchSize+1 {
-		t.Fatalf("got %d entries", len(entries))
-	}
-	for i, entry := range entries {
-		if entry.Name != fmt.Sprintf("HERO_%04d.pld", i+1) {
-			t.Fatalf("entry %d is out of order: %s", i, entry.Name)
-		}
+	if len(first.Files) != 4 || len(second.Files) != 4 || first.Files["MISC_0000.pld"].Text != "save" || first.Files["MISC_0001.pld"].Text != "save" || second.Files["MISC_0000.pld"].Text != "save" || second.Files["MISC_0001.pld"].Text != "save" || first.Fingerprint == "" || first.Fingerprint != second.Fingerprint {
+		t.Fatalf("optional budget selection depends on directory order: first=%+v second=%+v", first, second)
 	}
 }
 
-func TestInventoryAcceptsDirectoryEntryLimit(t *testing.T) {
-	folder := t.TempDir()
+func TestScannerAcceptsExactDirectoryEntryLimit(t *testing.T) {
+	folder := fixtureFolder(t)
 	limits := smallLimits()
-	for i := 0; i < limits.DirectoryEntries; i++ {
+	for i := 0; i < limits.DirectoryEntries-4; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
 
-	entries, err := inventory(context.Background(), folder, limits.DirectoryEntries)
+	_, _ = scanner.Scan(context.Background(), now)
+	snapshot, err := scanner.Scan(context.Background(), now)
 
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("inventory = %v, %v", entries, err)
+	if err != nil || len(snapshot.Files) != 2 {
+		t.Fatalf("exact directory limit: snapshot=%+v error=%v", snapshot, err)
 	}
 }
 
@@ -262,17 +273,20 @@ func TestScannerRejectsTooManyDirectoryEntriesWithoutPartialSnapshot(t *testing.
 	}
 }
 
-func TestInventoryAcceptsEligibleFileLimit(t *testing.T) {
-	folder := t.TempDir()
+func TestScannerAcceptsExactEligibleFileLimit(t *testing.T) {
+	folder := fixtureFolder(t)
 	limits := smallLimits()
-	for i := 0; i < limits.SaveFiles; i++ {
+	for i := 0; i < limits.SaveFiles-2; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "")
 	}
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
 
-	entries, err := inventory(context.Background(), folder, limits.DirectoryEntries)
+	_, _ = scanner.Scan(context.Background(), now)
+	snapshot, err := scanner.Scan(context.Background(), now)
 
-	if err != nil || len(entries) != limits.SaveFiles {
-		t.Fatalf("inventory count = %d, error = %v", len(entries), err)
+	if err != nil || len(snapshot.Files) != limits.SaveFiles {
+		t.Fatalf("exact eligible limit: count=%d error=%v", len(snapshot.Files), err)
 	}
 }
 
@@ -339,30 +353,6 @@ func TestScannerRecoversAfterCancellation(t *testing.T) {
 	}
 }
 
-func TestInventoryCancellationDoesNotReadMissingFolder(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), "missing")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	entries, err := inventory(ctx, folder, DefaultLimits().DirectoryEntries)
-
-	if !errors.Is(err, context.Canceled) || entries != nil {
-		t.Fatalf("inventory = %v, %v; want cancellation", entries, err)
-	}
-}
-
-func TestReadFileCancellationDoesNotReadMissingFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.pld")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	text, err := readFile(ctx, path, metadata{}, DefaultLimits().FileBytes)
-
-	if !errors.Is(err, context.Canceled) || text != "" {
-		t.Fatalf("read = %q, %v; want cancellation", text, err)
-	}
-}
-
 func TestScannerPreservesBOMAndFingerprintsOriginalText(t *testing.T) {
 	folder := fixtureFolder(t)
 	scanner := NewScanner(folder, 0, DefaultLimits())
@@ -383,20 +373,28 @@ func TestScannerPreservesBOMAndFingerprintsOriginalText(t *testing.T) {
 	}
 }
 
-func TestEligibleFiltersFiles(t *testing.T) {
+func TestScannerFiltersEligibleFiles(t *testing.T) {
 	cases := []struct {
 		name string
 		want bool
 	}{
-		{"HERO_01_123.pld", true}, {"account_player_123.PLD", true},
+		{"HERO_01_123.pld", true}, {"account_other_456.PLD", true},
 		{"ENTITLEMENTS_player_123_1.pld", true}, {"SETTINGS_123.pld", true}, {"LEGACY_player_123.pld", true},
 		{"ACCOUNT_VERIFY_123.pld", true}, {"HERO_01_123.txt", false}, {"private_something.pld", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := eligible(tc.name)
-			if got != tc.want {
-				t.Fatalf("eligible = %v; want %v", got, tc.want)
+			folder := fixtureFolder(t)
+			writeFixture(t, filepath.Join(folder, tc.name), "candidate")
+			scanner := NewScanner(folder, 0, DefaultLimits())
+			now := time.Now()
+
+			_, _ = scanner.Scan(context.Background(), now)
+			snapshot, err := scanner.Scan(context.Background(), now)
+			_, included := snapshot.Files[tc.name]
+
+			if err != nil || included != tc.want {
+				t.Fatalf("included=%v want=%v error=%v", included, tc.want, err)
 			}
 		})
 	}

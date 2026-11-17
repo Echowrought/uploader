@@ -31,6 +31,20 @@ func TestRenderStatusWithHistory(t *testing.T) {
 	}
 }
 
+func TestRenderSupplementaryWarningsAlongsideDelivery(t *testing.T) {
+	deadline := time.Date(2026, 1, 1, 12, 34, 56, 0, time.UTC)
+	view := statusView{
+		folder:   pollEvent{kind: pollStable, warnings: []string{"skip supplementary save MISC_bad.pld: invalid UTF-8"}},
+		delivery: deliveryView{active: uploadRetryScheduled{retryAt: deadline}},
+	}
+
+	message := renderStatus(view, storage.UploadState{})
+
+	if message != "No new changes; Retry at 12:34:56; Save warnings: 1 (see logs)" {
+		t.Fatal(message)
+	}
+}
+
 func TestRenderStatus(t *testing.T) {
 	folderError := errors.New("cannot read save folder")
 	rejected := errors.New("invalid save")

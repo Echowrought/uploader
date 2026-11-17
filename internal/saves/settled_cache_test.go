@@ -106,13 +106,16 @@ func TestScannerBudgetsSettledEssentialVersionsRatherThanCandidates(t *testing.T
 	assertSettledCacheWithinLimits(t, scanner, limits)
 }
 
+// Narrow resource-invariant exception: output size cannot prove that retained
+// payload memory is bounded. Count actual retained text, independently of the
+// production accounting helper; do not assert cache layout or pointer identity.
 func assertSettledCacheWithinLimits(t *testing.T, scanner *Scanner, limits Limits) {
 	t.Helper()
 	var bytes int64
 	count := 0
 	for _, state := range scanner.settlements {
 		if state.settled != nil {
-			bytes += settledSize(state.settled)
+			bytes += int64(len(state.settled.Text))
 			count++
 		}
 	}

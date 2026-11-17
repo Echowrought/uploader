@@ -4,203 +4,229 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
 )
 
 func TestPendingNewFolderRemainsVisibleDuringOldFolderBackoff(t *testing.T) {
-	application, client := fixtureApp(t)
-	replacement, _ := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	old := fixtureFolderUpdate("old", "old save")
-	old.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		replacement, _ := fixtureApp(t)
+		if err := os.WriteFile(filepath.Join(replacement.Config.SaveFolder, "HERO_01_123.pld"), []byte("replacement hero"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, old)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{err: &leaderboard.UploadError{Message: "retry later", Retry: true, After: time.Hour}}
-	_ = nextCoordinatorEvent[uploadRetryScheduled](t, ctx, state)
-	commandErr := state.handleCommand(ctx, Command{Kind: "folder", Value: replacement.Config.SaveFolder})
-	now := time.Now()
-	state.tick(ctx, now.Add(6*time.Second))
-	state.tick(ctx, now.Add(7*time.Second))
-	status := publishedStatus(t, application)
-	message := status.Message
-	menu := status.Menu(time.Now())
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		deadline := time.Now().Add(20 * time.Second)
+		first.reply <- uploadReply{err: retryAfterError(20 * time.Second)}
+		_ = awaitStatus(t, ctx, application, "Retry at")
+		err := sendCommand(t, ctx, application, Command{Kind: "folder", Value: replacement.Config.SaveFolder})
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		pending := awaitStatus(t, ctx, application, "Pending upload")
+		early := len(client.requests)
+		second := nextRequest(t, ctx, client)
+		second.reply <- uploadReply{result: successfulResult()}
+		status := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
+		persisted, loadErr := storage.LoadUploadState(application.Dir)
 
-	if commandErr != nil {
-		t.Fatal(commandErr)
-	}
-	if !strings.Contains(message, "No new changes; Pending upload; Retry at ") || !strings.Contains(message, "(previous folder)") {
-		t.Fatalf("accepted new-folder work disappeared during backoff: %s", message)
-	}
-	if !strings.Contains(menu.Upload.Title, "Pending upload") || !strings.Contains(menu.Upload.Title, "Retry at") || !strings.Contains(menu.Upload.Details, "previous folder") {
-		t.Fatalf("separate upload row lost accepted work or backoff: %+v", menu.Upload)
-	}
-	if len(client.requests) != 0 {
-		t.Fatal("new-folder work bypassed the old request's backoff")
-	}
+		if err != nil || loadErr != nil {
+			t.Fatalf("command=%v load=%v", err, loadErr)
+		}
+		menu := pending.Menu(time.Now())
+		if !strings.Contains(menu.Upload.Title, "Pending upload") || !strings.Contains(menu.Upload.Title, "Retry at") || !strings.Contains(menu.Upload.Details, "previous folder") || early != 0 {
+			t.Fatalf("pending/backoff presentation lost: %+v", menu)
+		}
+		if second.startedAt.Before(deadline) || second.payload.Files["HERO_01_123.pld"].Text != "replacement hero" || persisted.SaveFolder != replacement.Config.SaveFolder || status.History != persisted {
+			t.Fatal("new folder bypassed backoff, failed to replace work, or lost history origin")
+		}
+	})
 }
 
-func TestOlderCompletionDoesNotClearRepeatedSnapshotPendingUpload(t *testing.T) {
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("same", "same save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func TestManualRequestRemainsPendingUntilIdenticalOlderUploadCompletes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	started := nextLifecycleEvent(t, ctx, state.uploader)
-	state.forwardSnapshot(ctx, update)
-	// Process the first emission's delayed start only after the second
-	// identical emission has been accepted into the pending slot.
-	state.handleUploadEvent(started)
-	first := nextRequest(t, ctx, client)
-	afterStarted := publishedStatus(t, application).Message
-	first.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	afterFirst := publishedStatus(t, application).Message
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	afterSecond := publishedStatus(t, application).Message
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		err := sendCommand(t, ctx, application, Command{Kind: "upload"})
+		pending := awaitStatus(t, ctx, application, "Pending upload")
+		first.reply <- uploadReply{result: successfulResult()}
+		second := nextRequest(t, ctx, client)
+		// The second call is held open: older success must not mark it completed.
+		active := awaitStatus(t, ctx, application, "Last upload:")
+		second.reply <- uploadReply{result: successfulResult()}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		final := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
 
-	if !strings.Contains(afterStarted, "Pending upload; Uploading saves") {
-		t.Fatalf("delayed older start event erased a repeated emission: %s", afterStarted)
-	}
-	if !strings.Contains(afterFirst, "Pending upload") || !strings.Contains(afterFirst, "Last upload:") {
-		t.Fatalf("older success erased a repeated emission: %s", afterFirst)
-	}
-	if strings.Contains(afterSecond, "Pending upload") || strings.Contains(afterSecond, "Uploading saves") || !strings.Contains(afterSecond, "Last upload:") {
-		t.Fatalf("completed delivery remained active: %s", afterSecond)
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(pending.Upload, "Pending upload") || !strings.Contains(pending.Upload, "Uploading saves") || !strings.Contains(active.Upload, "Uploading saves") || active.History.UploadedAt.IsZero() || final.Upload != "" || !reflect.DeepEqual(first.payload, second.payload) {
+			t.Fatal("older completion cleared newer identical accepted work or lost history")
+		}
+	})
 }
 
-func TestDelayedRejectionDoesNotRejectNewerPendingEmission(t *testing.T) {
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("same", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func TestSupersededRejectionDoesNotDescribeNewPendingSaves(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	first := nextRequest(t, ctx, client)
-	first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid old emission"}}
-	rejected := nextUploaderEvent[uploadRejected](t, ctx, state.uploader)
-	state.forwardSnapshot(ctx, update)
-	state.handleUploadEvent(rejected)
-	afterRejection := publishedStatus(t, application).Message
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	second := nextRequest(t, ctx, client)
-	second.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("new save"), 0600)
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "invalid old emission"}}
+		second := nextRequest(t, ctx, client)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		active := awaitStatus(t, ctx, application, "Uploading saves")
+		second.reply <- uploadReply{result: successfulResult()}
+		final := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
 
-	status := publishedStatus(t, application)
-	if !strings.Contains(afterRejection, "Pending upload") || strings.Contains(afterRejection, "invalid old emission") {
-		t.Fatalf("an older rejection described newer pending work: %s", afterRejection)
-	}
-	if strings.Contains(status.Message, "Pending upload") || !strings.Contains(status.Message, "Last upload:") {
-		t.Fatalf("newer emission did not complete: %s", status.Message)
-	}
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if strings.Contains(active.Message, "invalid old emission") || second.payload.Files["HERO_01_123.pld"].Text != "new save" || final.Upload != "" {
+			t.Fatal("superseded rejection hid or rejected newer accepted work")
+		}
+	})
 }
 
-func TestDelayedPreviewDoesNotClearNewerPendingEmission(t *testing.T) {
-	application, client := fixtureApp(t)
-	application.DryRun = true
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("same", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func TestFolderChangePreservesAcceptedOldFolderWorkAndHistory(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		old := application.Config.SaveFolder
+		replacement := t.TempDir()
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	preview := nextUploaderEvent[uploadPreviewed](t, ctx, state.uploader)
-	state.forwardSnapshot(ctx, update)
-	state.handleUploadEvent(preview)
-	afterFirst := publishedStatus(t, application)
-	_ = nextCoordinatorEvent[uploadPreviewed](t, ctx, state)
-	afterSecond := publishedStatus(t, application)
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		writeErr := os.WriteFile(filepath.Join(old, "HERO_01_123.pld"), []byte("pending old folder"), 0600)
+		time.Sleep(7 * time.Second)
+		synctest.Wait()
+		pauseErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		folderErr := sendCommand(t, ctx, application, Command{Kind: "folder", Value: replacement})
+		changed := awaitStatus(t, ctx, application, "previous folder")
+		first.reply <- uploadReply{result: successfulResult()}
+		second := nextRequest(t, ctx, client)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		active := awaitStatus(t, ctx, application, "Last upload:")
+		second.reply <- uploadReply{result: successfulResult()}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		final := awaitStatus(t, ctx, application, "successfully")
+		cancel()
+		<-done
+		persisted, loadErr := storage.LoadUploadState(application.Dir)
+		config, _, configErr := storage.LoadConfig(application.Dir, func() (string, error) { return "unused", nil })
 
-	if afterFirst.Message != "Pending upload" {
-		t.Fatalf("older preview replaced newer pending work: %s", afterFirst.Message)
-	}
-	if afterSecond.Message != "Dry run: 1 eligible files; no upload or successful state written" {
-		t.Fatalf("preview did not acknowledge its pending emission: %s", afterSecond.Message)
-	}
-	if len(client.requests) != 0 || !application.LastUpload.UploadedAt.IsZero() {
-		t.Fatal("preview uploaded data or recorded a successful upload")
-	}
+		if writeErr != nil || pauseErr != nil || folderErr != nil || loadErr != nil || configErr != nil {
+			t.Fatalf("errors: %v %v %v %v %v", writeErr, pauseErr, folderErr, loadErr, configErr)
+		}
+		if !strings.Contains(changed.Upload, "previous folder") || !strings.Contains(active.Upload, "Uploading saves (previous folder)") || active.History.SaveFolder != old || final.Upload != "" || final.Detection != "Automatic uploads off" {
+			t.Fatal("folder selection hid accepted work or old success replaced current presentation")
+		}
+		if second.payload.Files["HERO_01_123.pld"].Text != "pending old folder" || persisted.SaveFolder != old || persisted.Fingerprint != readSnapshot(t, old).Fingerprint || config.SaveFolder != replacement {
+			t.Fatal("accepted old-folder work changed origin or was interrupted")
+		}
+	})
 }
 
-func TestSuccessHistoryDoesNotHideSubsequentSettling(t *testing.T) {
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("first", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	now := time.Now()
+func TestOldFolderRejectionDoesNotReplaceCurrentDetection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
 
-	state.tick(ctx, now)
-	state.forwardSnapshot(ctx, update)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	writeErr := os.WriteFile(filepath.Join(application.Config.SaveFolder, "HERO_01_123.pld"), []byte("changed save"), 0600)
-	state.tick(ctx, now.Add(6*time.Second))
-	status := publishedStatus(t, application)
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		err := sendCommand(t, ctx, application, Command{Kind: "folder", Value: t.TempDir()})
+		changed := awaitStatus(t, ctx, application, "previous folder")
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "old save rejected"}}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		status := awaitStatus(t, ctx, application, "waiting for HERO_")
+		cancel()
+		<-done
 
-	if writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	if !strings.Contains(status.Message, "waiting for saves to settle") || !strings.Contains(status.Message, "Last upload:") {
-		t.Fatalf("success history hid new detection activity: %s", status.Message)
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(changed.Upload, "previous folder") || status.Upload != "" || strings.Contains(status.Message, "old save rejected") || status.History.Fingerprint != "" {
+			t.Fatal("old-folder rejection leaked into current presentation or remained active")
+		}
+	})
+}
+
+func TestFolderChangeClearsExistingRejection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		replacement, _ := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+		defer cancel()
+
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: &leaderboard.UploadError{Message: "old rejection"}}
+		_ = awaitStatus(t, ctx, application, "old rejection")
+		folderErr := sendCommand(t, ctx, application, Command{Kind: "folder", Value: replacement.Config.SaveFolder})
+		settling := awaitStatus(t, ctx, application, "waiting for saves to settle")
+		cancel()
+		<-done
+
+		if folderErr != nil {
+			t.Fatal(folderErr)
+		}
+		if settling.Config.SaveFolder != replacement.Config.SaveFolder || strings.Contains(settling.Message, "old rejection") || settling.Upload != "" {
+			t.Fatal("folder selection retained the previous folder's rejection")
+		}
+	})
 }
 
 func TestSuccessHistoryDoesNotHidePause(t *testing.T) {
-	application, client := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	update := fixtureFolderUpdate("first", "save")
-	update.saveFolder = application.Config.SaveFolder
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
 
-	state.forwardSnapshot(ctx, update)
-	_ = nextCoordinatorEvent[uploadStarted](t, ctx, state)
-	request := nextRequest(t, ctx, client)
-	request.reply <- uploadReply{result: successfulResult()}
-	_ = nextCoordinatorEvent[uploadSucceeded](t, ctx, state)
-	commandErr := state.handleCommand(ctx, Command{Kind: "pause"})
-	status := publishedStatus(t, application)
+		done := startApp(ctx, application)
+		request := nextRequest(t, ctx, client)
+		request.reply <- uploadReply{result: successfulResult()}
+		completed := awaitStatus(t, ctx, application, "successfully")
+		pauseErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		paused := awaitStatus(t, ctx, application, "Automatic uploads off")
+		cancel()
+		<-done
 
-	if commandErr != nil {
-		t.Fatal(commandErr)
-	}
-	if !strings.Contains(status.Message, "Automatic uploads off") || !strings.Contains(status.Message, "Last upload:") {
-		t.Fatalf("success history hid paused detection: %s", status.Message)
-	}
-}
-
-func TestFailedQueueDoesNotClaimPendingDelivery(t *testing.T) {
-	application, _ := fixtureApp(t)
-	state := fixtureCoordinator(t, application)
-	state.uploader.stop()
-
-	state.forwardSnapshot(context.Background(), fixtureFolderUpdate("stopped", "save"))
-	status := publishedStatus(t, application)
-
-	if !strings.Contains(status.Message, "uploader stopped") || strings.Contains(status.Message, "Pending upload") {
-		t.Fatalf("failed acceptance claimed pending delivery: %s", status.Message)
-	}
+		if pauseErr != nil {
+			t.Fatal(pauseErr)
+		}
+		if paused.Detection != "Automatic uploads off" || paused.History.UploadedAt.IsZero() || paused.History != completed.History || !strings.Contains(paused.Message, "Last upload:") {
+			t.Fatal("paused detection and confirmed history were not both retained")
+		}
+	})
 }
