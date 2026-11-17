@@ -2,6 +2,8 @@
 
 Watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard). Available for Windows 10+ (tray or console) and Linux x86-64 (console only). It never modifies game saves.
 
+**Unofficial community tool — not an official CWG RPG application.**
+
 **Automatic uploads are enabled by default, including existing saves.** Saves go to a third-party service and may appear on its public leaderboard. Read the upload notice before the first normal run.
 
 ## Install and run
