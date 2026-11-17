@@ -98,7 +98,8 @@ func TestOldFolderSuccessIsPersistedWithoutReplacingCurrentPresentation(t *testi
 	if status.Upload != "Uploading saves" || status.Config.SaveFolder != replacement {
 		t.Fatalf("old success replaced newer activity or selection: %+v", status)
 	}
-	if persisted != status.History || persisted.SaveFolder != oldFolder || persisted.Fingerprint != success.fingerprint || !persisted.UploadedAt.Equal(confirmedAt) || persisted.Player != success.result.Player || persisted.Heroes != success.result.Heroes {
+	assertUploadHistoryEqual(t, persisted, status.History)
+	if persisted.SaveFolder != oldFolder || persisted.Fingerprint != success.fingerprint || !persisted.UploadedAt.Equal(confirmedAt) || persisted.Player != success.result.Player || persisted.Heroes != success.result.Heroes {
 		t.Fatalf("old-folder confirmation was lost or given the wrong origin: %+v", persisted)
 	}
 }

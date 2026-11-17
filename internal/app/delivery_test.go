@@ -48,7 +48,8 @@ func TestPendingNewFolderRemainsVisibleDuringOldFolderBackoff(t *testing.T) {
 		if !strings.Contains(menu.Upload.Title, "Pending upload") || !strings.Contains(menu.Upload.Title, "Retry at") || !strings.Contains(menu.Upload.Details, "previous folder") || early != 0 {
 			t.Fatalf("pending/backoff presentation lost: %+v", menu)
 		}
-		if second.startedAt.Before(deadline) || second.payload.Files["HERO_01_123.pld"].Text != "replacement hero" || persisted.SaveFolder != replacement.Config.SaveFolder || status.History != persisted {
+		assertUploadHistoryEqual(t, persisted, status.History)
+		if second.startedAt.Before(deadline) || second.payload.Files["HERO_01_123.pld"].Text != "replacement hero" || persisted.SaveFolder != replacement.Config.SaveFolder {
 			t.Fatal("new folder bypassed backoff, failed to replace work, or lost history origin")
 		}
 	})

@@ -38,7 +38,8 @@ func TestAppPersistsSuccessfulSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if persisted.Fingerprint != snapshot.Fingerprint || persisted.Heroes != 1 || persisted.Player != "Player" || status.History != persisted || status.History.UploadedAt.IsZero() {
+		assertUploadHistoryEqual(t, persisted, status.History)
+		if persisted.Fingerprint != snapshot.Fingerprint || persisted.Heroes != 1 || persisted.Player != "Player" || status.History.UploadedAt.IsZero() {
 			t.Fatalf("incorrect persisted/published history: %+v, %+v", persisted, status.History)
 		}
 	})
@@ -420,4 +421,12 @@ func awaitStatus(t *testing.T, ctx context.Context, application *App, substring 
 }
 func successfulResult() leaderboard.Result {
 	return leaderboard.Result{Player: "Player", Heroes: 1, UserHash: json.RawMessage(`"123"`)}
+}
+
+func assertUploadHistoryEqual(t *testing.T, got, want storage.UploadState) {
+	t.Helper()
+	// JSON round trips preserve the instant, not time.Time's location identity.
+	if got.SaveFolder != want.SaveFolder || got.Destination != want.Destination || got.Fingerprint != want.Fingerprint || !got.UploadedAt.Equal(want.UploadedAt) || got.Player != want.Player || got.Heroes != want.Heroes {
+		t.Fatalf("upload history = %+v; want %+v", got, want)
+	}
 }

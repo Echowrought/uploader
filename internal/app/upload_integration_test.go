@@ -47,7 +47,8 @@ func TestAppCoalescesPendingSavesWhileStatusIsUnread(t *testing.T) {
 		if first.payload.Files["HERO_01_123.pld"].Text != "save" || second.payload.Files["HERO_01_123.pld"].Text != "latest save" || len(client.requests) != 0 {
 			t.Fatal("pending snapshots were lost, mutated, or not coalesced")
 		}
-		if persisted.Fingerprint != readSnapshot(t, application.Config.SaveFolder).Fingerprint || status.History != persisted || status.Upload != "" {
+		assertUploadHistoryEqual(t, persisted, status.History)
+		if persisted.Fingerprint != readSnapshot(t, application.Config.SaveFolder).Fingerprint || status.Upload != "" {
 			t.Fatal("latest delivery was not recorded or remained active")
 		}
 	})

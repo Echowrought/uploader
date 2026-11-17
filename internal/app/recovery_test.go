@@ -73,7 +73,8 @@ func TestPersistenceRetrySavesLatestSuccessWithAutomaticOff(t *testing.T) {
 		if pauseErr != nil || requestErr != nil || removeErr != nil || loadErr != nil {
 			t.Fatalf("errors: %v %v %v %v", pauseErr, requestErr, removeErr, loadErr)
 		}
-		if failed.History.Player != "Latest" || failed.HistoryError == "" || persisted != failed.History || persisted.Heroes != 2 || recovered.HistoryError != "" || recovered.Config.Automatic || len(client.requests) != 0 {
+		assertUploadHistoryEqual(t, persisted, failed.History)
+		if failed.History.Player != "Latest" || failed.HistoryError == "" || persisted.Heroes != 2 || recovered.HistoryError != "" || recovered.Config.Automatic || len(client.requests) != 0 {
 			t.Fatalf("recovery lost latest history or retried HTTP: failed=%+v recovered=%+v persisted=%+v", failed, recovered, persisted)
 		}
 	})
@@ -105,7 +106,8 @@ func TestPersistenceRetryRecoversEvenWhenScanningFails(t *testing.T) {
 		if removeFolderErr != nil || removeErr != nil || loadErr != nil {
 			t.Fatalf("errors: %v %v %v", removeFolderErr, removeErr, loadErr)
 		}
-		if status.HistoryError != "" || persisted != failed.History || len(client.requests) != 0 || !strings.Contains(status.Detection, "read save folder") {
+		assertUploadHistoryEqual(t, persisted, failed.History)
+		if status.HistoryError != "" || len(client.requests) != 0 || !strings.Contains(status.Detection, "read save folder") {
 			t.Fatal("scan failure hid diagnostics, prevented history recovery, or caused HTTP replay")
 		}
 	})
