@@ -5,7 +5,7 @@ const files = new Map([
   ['/', ['../site/index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['../site/index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['../site/styles.css', 'text/css; charset=utf-8']],
-  ['/assets/icon.svg', ['../assets/icon.svg', 'image/svg+xml']],
+  ['/assets/icon.png', ['../assets/icon.png', 'image/png']],
 ]);
 const port = Number(process.argv[2] ?? 8080);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {

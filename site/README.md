@@ -13,7 +13,7 @@ node scripts/serve-site.mjs
 ```
 
 Open http://127.0.0.1:8080/. Edits are served directly from `site/`; refresh to
-see changes. The server maps the shared icon from `assets/icon.svg`, so there is
+see changes. The server maps the shared icon from `assets/icon.png`, so there is
 no copied output directory. Pass a different port as an argument if needed:
 `node scripts/serve-site.mjs 8081`. Ctrl+C stops it. Only site files and the shared
 icon are served, on the local loopback interface.
@@ -25,7 +25,7 @@ GitHub Actions**. This is not enabled by the workflow itself.
 
 `.github/workflows/pages.yml` publishes `site/` on relevant pushes to `master`,
 or via **Actions → Website → Run workflow** on `master`. It copies the shared
-icon into the deployment folder; edit `assets/icon.svg`, not a second icon source.
+icon into the deployment folder; edit `assets/icon.png`, not a second icon source.
 Deployments use the `github-pages` environment and its protection rules. PRs do
 not publish. Repository source and application binaries are not included.
 

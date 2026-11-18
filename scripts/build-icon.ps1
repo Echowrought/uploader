@@ -6,23 +6,29 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     New-Item -ItemType Directory -Path $workspace | Out-Null
-    $archive = Join-Path $workspace 'resvg.zip'
-    Invoke-WebRequest -UseBasicParsing `
-        -Uri 'https://github.com/linebender/resvg/releases/download/v0.50.0/resvg-win-x86_64.zip' `
-        -OutFile $archive
-    $expected = 'e4817e40ac63d3eb5c9e5762526cf6cc91f0cc108de38cd09dd60be765184efd'
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
-        throw 'SVG renderer download hash mismatch'
-    }
-    Expand-Archive -LiteralPath $archive -DestinationPath $workspace
-    $renderer = Join-Path $workspace 'resvg.exe'
+    Add-Type -AssemblyName System.Drawing
+    $source = [Drawing.Image]::FromFile((Resolve-Path assets/icon.png))
     $sizes = @(16, 20, 24, 32, 40, 48, 64, 128, 256)
     $images = [Collections.Generic.List[byte[]]]::new()
-    foreach ($size in $sizes) {
-        $png = Join-Path $workspace "$size.png"
-        & $renderer --width $size --height $size assets/icon.svg $png
-        if ($LASTEXITCODE -ne 0) { throw "SVG rendering failed at $size pixels" }
-        $images.Add([IO.File]::ReadAllBytes($png))
+    try {
+        foreach ($size in $sizes) {
+            $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $graphics = [Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $graphics.DrawImage($source, 0, 0, $size, $size)
+                $stream = [IO.MemoryStream]::new()
+                $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+                $images.Add($stream.ToArray())
+            } finally {
+                $graphics.Dispose()
+                $bitmap.Dispose()
+            }
+        }
+    } finally {
+        $source.Dispose()
     }
 
     # Windows 10+ accepts PNG-compressed entries in ICO files.
