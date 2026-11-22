@@ -103,7 +103,8 @@ func run(console, dryRun bool, saveFolder string) error {
 		return err
 	}
 	defer httpClient.CloseIdleConnections()
-	account, credentialErr := leaderboard.OpenAccount(httpClient, configDir)
+	account, credentialErr := leaderboard.OpenAccount(configDir)
+	client := leaderboard.NewClient(httpClient, account)
 	writer, err := storage.OpenLog(stateDir)
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func run(console, dryRun bool, saveFolder string) error {
 	defer cancel()
 	application := &app.App{
 		Dir: stateDir, ConfigDir: configDir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
-		Client: account,
+		Client: client,
 		Logger: logger, Commands: make(chan app.Command, 16), Updates: make(chan app.Status, 1),
 	}
 	done := make(chan struct{})
@@ -152,7 +153,7 @@ func run(console, dryRun bool, saveFolder string) error {
 	if console {
 		return runConsole(ctx, cancel, application, done, dryRun)
 	}
-	err = runTray(ctx, cancel, application, configDir, account)
+	err = runTray(ctx, cancel, application, configDir, account, leaderboard.NewAuthenticator(client))
 	cancel()
 	<-done
 	return err
@@ -177,10 +178,11 @@ func runAuthentication() error {
 		return err
 	}
 	defer httpClient.CloseIdleConnections()
-	account, _ := leaderboard.OpenAccount(httpClient, configDir)
+	account, _ := leaderboard.OpenAccount(configDir)
+	authenticator := leaderboard.NewAuthenticator(leaderboard.NewClient(httpClient, account))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := account.Authenticate(ctx, func(_ context.Context, link string) error {
+	if err := authenticator.Authenticate(ctx, func(_ context.Context, link string) error {
 		_, err := fmt.Fprintln(os.Stdout, "Open this link to approve upload access:\n"+link)
 		return err
 	}); err != nil {

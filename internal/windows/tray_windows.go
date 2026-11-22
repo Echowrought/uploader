@@ -15,7 +15,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account) error {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator) error {
 	job, err := newSubprocessJob()
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					cancelAuth.Show()
 					accountItem.SetTitle("Authentication pending")
 					go func() {
-						authDone <- account.Authenticate(authCtx, func(ctx context.Context, link string) error {
+						authDone <- authenticator.Authenticate(authCtx, func(ctx context.Context, link string) error {
 							return presentApproval(ctx, job, link)
 						})
 					}()

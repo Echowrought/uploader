@@ -30,7 +30,7 @@ func TestClientUploadsRequest(t *testing.T) {
 	request := UploadRequest{Files: map[string]UploadFile{"HERO_01_123.pld": {Text: "save", Mtime: 1700000000123}}}
 	wantUserAgent := "CWGRPGUploader/" + buildinfo.Version
 
-	result, err := client.Upload(context.Background(), request)
+	result, err := uploadForTest(client, context.Background(), request)
 
 	if err != nil || decodeErr != nil {
 		t.Fatalf("errors: %v, %v", err, decodeErr)
@@ -57,7 +57,7 @@ func TestClientClassifiesRateLimit(t *testing.T) {
 	defer server.Close()
 	client := Client{HTTP: server.Client(), URL: server.URL}
 
-	_, err := client.Upload(context.Background(), UploadRequest{})
+	_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || !uploadError.Retry || uploadError.After != 120*time.Second {
@@ -86,7 +86,7 @@ func TestClientClassifiesIncompleteErrorResponses(t *testing.T) {
 			defer server.Close()
 			client := Client{HTTP: server.Client(), URL: server.URL}
 
-			_, err := client.Upload(context.Background(), UploadRequest{})
+			_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 			var uploadError *UploadError
 			if !errors.As(err, &uploadError) {
@@ -116,7 +116,7 @@ func TestClientRejectsIncompleteSuccessResponse(t *testing.T) {
 	defer server.Close()
 	client := Client{HTTP: server.Client(), URL: server.URL}
 
-	_, err := client.Upload(context.Background(), UploadRequest{})
+	_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || !uploadError.Retry {
@@ -151,7 +151,7 @@ func TestClientClassifiesOversizedResponses(t *testing.T) {
 			defer server.Close()
 			client := Client{HTTP: server.Client(), URL: server.URL}
 
-			_, err := client.Upload(context.Background(), UploadRequest{})
+			_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 			var uploadError *UploadError
 			if !errors.As(err, &uploadError) {
@@ -178,7 +178,7 @@ func TestClientRetainsSmallErrorBodyForLogging(t *testing.T) {
 	defer server.Close()
 	client := Client{HTTP: server.Client(), URL: server.URL}
 
-	_, err := client.Upload(context.Background(), UploadRequest{})
+	_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || uploadError.Retry || uploadError.Message != `upload rejected: HTTP 400: "{\"error\":\"invalid save\"}"` || uploadError.Body != `{"error":"invalid save"}` {
@@ -206,7 +206,7 @@ func TestClientErrorBodyLoggingSizeLimit(t *testing.T) {
 			defer server.Close()
 			client := Client{HTTP: server.Client(), URL: server.URL}
 
-			_, err := client.Upload(context.Background(), UploadRequest{})
+			_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 			var uploadError *UploadError
 			if !errors.As(err, &uploadError) || !uploadError.Retry {
@@ -227,7 +227,7 @@ func TestClientRejectsUnrecognizedSuccess(t *testing.T) {
 	defer server.Close()
 	client := Client{HTTP: server.Client(), URL: server.URL}
 
-	_, err := client.Upload(context.Background(), UploadRequest{})
+	_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 	if err == nil {
 		t.Fatal("unrecognized success was accepted")
@@ -241,7 +241,7 @@ func TestClientReportsCancelledRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := client.Upload(ctx, UploadRequest{})
+	_, err := uploadForTest(client, ctx, UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || uploadError.Retry {
@@ -259,7 +259,7 @@ func TestClientReportsExpiredCallerDeadline(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
-	_, err := client.Upload(ctx, UploadRequest{})
+	_, err := uploadForTest(client, ctx, UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || uploadError.Retry {
@@ -289,7 +289,7 @@ func TestClientReportsCancellationWhileReadingResponse(t *testing.T) {
 				})},
 			}
 
-			_, err := client.Upload(ctx, UploadRequest{})
+			_, err := uploadForTest(client, ctx, UploadRequest{})
 
 			var uploadError *UploadError
 			if !errors.As(err, &uploadError) || uploadError.Retry || uploadError.After != 0 {
@@ -316,7 +316,7 @@ func TestClientRetriesHTTPTimeoutWithActiveCallerContext(t *testing.T) {
 		},
 	}
 
-	_, err := client.Upload(ctx, UploadRequest{})
+	_, err := uploadForTest(client, ctx, UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || !uploadError.Retry {
@@ -340,7 +340,7 @@ func TestClientPreservesConnectionError(t *testing.T) {
 		})},
 	}
 
-	_, err := client.Upload(context.Background(), UploadRequest{})
+	_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 	var uploadError *UploadError
 	if !errors.As(err, &uploadError) || !uploadError.Retry {
@@ -373,7 +373,7 @@ func TestClientQuotesAndBoundsResponseExcerpts(t *testing.T) {
 			})}}
 			want := strings.Replace(tc.want, "error:", "upload rejected: HTTP 400:", 1)
 
-			_, err := client.Upload(context.Background(), UploadRequest{})
+			_, err := uploadForTest(client, context.Background(), UploadRequest{})
 
 			var uploadError *UploadError
 			if !errors.As(err, &uploadError) || uploadError.Message != want {
@@ -401,7 +401,7 @@ func TestClientParsesRetryAfterHTTPDate(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {value}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 				})}}
 
-				_, err := client.Upload(t.Context(), UploadRequest{})
+				_, err := uploadForTest(client, t.Context(), UploadRequest{})
 
 				var uploadError *UploadError
 				if !errors.As(err, &uploadError) || !uploadError.Retry || uploadError.After != tc.want {
@@ -412,7 +412,7 @@ func TestClientParsesRetryAfterHTTPDate(t *testing.T) {
 	}
 }
 
-func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
+func uploadForTest(c Client, ctx context.Context, request UploadRequest) (Result, error) {
 	return c.upload(ctx, request, strings.Repeat("xY", 21)+"Z")
 }
 
