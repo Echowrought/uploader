@@ -50,8 +50,8 @@ try {
         $writer.Dispose()
     }
     $resource = Join-Path $workspace 'icon_windows_amd64.syso'
-    go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico $icon -o $resource
-    if ($LASTEXITCODE -ne 0) { throw 'Windows icon resource generation failed' }
+    go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico $icon -manifest assets/windows.manifest -o $resource
+    if ($LASTEXITCODE -ne 0) { throw 'Windows icon and manifest resource generation failed' }
     Copy-Item -LiteralPath $icon -Destination internal/windows/icon.ico
     Copy-Item -LiteralPath $resource -Destination internal/windows/icon_windows_amd64.syso
     Write-Host 'Regenerated internal/windows/icon.ico and icon_windows_amd64.syso'
