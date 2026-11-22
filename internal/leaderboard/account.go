@@ -3,6 +3,7 @@ package leaderboard
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"cwgrpguploader/internal/storage"
@@ -19,6 +20,9 @@ type Account struct {
 
 func OpenAccount(dir string) (*Account, error) {
 	credential, err := storage.LoadCredential(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return &Account{dir: dir}, nil
+	}
 	return &Account{dir: dir, credential: credential, rejected: err != nil}, err
 }
 

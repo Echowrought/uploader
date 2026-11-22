@@ -1,12 +1,24 @@
 package leaderboard
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestAccountWithUnreadableCredentialDoesNotRequestStartupPrompt(t *testing.T) {
+func TestOpenAccountWithNoCredentialAllowsAnonymousUploads(t *testing.T) {
+	dir := t.TempDir()
+
+	account, err := OpenAccount(dir)
+	token, uploadErr := account.uploadToken()
+
+	if err != nil || uploadErr != nil || token != "" || !account.MissingCredential() {
+		t.Fatalf("open=%v, upload=%v, missing=%t", err, uploadErr, account.MissingCredential())
+	}
+}
+
+func TestOpenAccountWithInvalidCredentialBlocksUploads(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "uploader-token.json"), 0700); err != nil {
 		t.Fatal(err)
@@ -14,7 +26,9 @@ func TestAccountWithUnreadableCredentialDoesNotRequestStartupPrompt(t *testing.T
 
 	account, err := OpenAccount(dir)
 
-	if err == nil || account.MissingCredential() || account.Status() != "Reconnect required" {
-		t.Fatalf("load error=%v, missing=%t, status=%q", err, account.MissingCredential(), account.Status())
+	_, uploadErr := account.uploadToken()
+
+	if err == nil || !errors.Is(uploadErr, ErrAuthenticationRejected) || account.MissingCredential() || account.Status() != "Reconnect required" {
+		t.Fatalf("open=%v, upload=%v, missing=%t, status=%q", err, uploadErr, account.MissingCredential(), account.Status())
 	}
 }
