@@ -79,7 +79,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Account connection
 
-Uploads require a connected Leaderboard account. The uploader never opens a login page on startup and never falls back to anonymous uploads. If access is rejected, choose **Authenticate…** again or stop the console app and rerun it with `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+Uploads require a connected Leaderboard account. If no credential is saved, the tray asks whether to connect at startup, and the console shows the `--authenticate` command. The uploader never starts login without your confirmation and never falls back to anonymous uploads. If a saved credential is invalid or rejected, the app does not prompt again: choose **Authenticate…** in the tray or stop the console app and rerun it with `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
 
 ## Configuration and logs
 

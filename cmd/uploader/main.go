@@ -121,6 +121,9 @@ func run(console, dryRun bool, saveFolder string) error {
 		}
 		if console {
 			fmt.Fprintln(os.Stdout, account.Status())
+			if account.MissingCredential() {
+				fmt.Fprintln(os.Stdout, "To enable uploads, stop the uploader and run it with --authenticate.")
+			}
 		}
 	}
 	lastUpload, err := storage.LoadUploadState(stateDir)

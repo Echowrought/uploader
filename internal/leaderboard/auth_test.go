@@ -189,6 +189,9 @@ func TestUploadDoesNotFallBackWhenCredentialIsRejectedOrMissing(t *testing.T) {
 	if !errors.Is(missingErr, ErrAuthenticationRequired) || !errors.Is(firstErr, ErrAuthenticationRejected) || !errors.Is(secondErr, ErrAuthenticationRejected) || account.Status() != "Reconnect required" {
 		t.Fatalf("missing=%v, first=%v, second=%v, status=%q", missingErr, firstErr, secondErr, account.Status())
 	}
+	if !missing.MissingCredential() || account.MissingCredential() {
+		t.Fatal("the rejected credential should not trigger the missing-credential prompt")
+	}
 	if len(calls) != 1 || calls[0].url != BaseURL+"/api/uploader/upload" || calls[0].authorization != "Bearer "+existing.Token {
 		t.Fatal("unexpected authenticated request or anonymous fallback")
 	}

@@ -52,6 +52,29 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			picking := false
 			authDone := make(chan error, 1)
 			var stopAuth context.CancelFunc
+			startAuth := func() {
+				if stopAuth != nil || ctx.Err() != nil {
+					return
+				}
+				authCtx, cancelAttempt := context.WithCancel(ctx)
+				stopAuth = cancelAttempt
+				authenticate.Disable()
+				disconnect.Disable()
+				cancelAuth.Show()
+				accountItem.SetTitle("Authentication pending")
+				go func() {
+					authDone <- authenticator.Authenticate(authCtx, func(ctx context.Context, link string) error {
+						return presentApproval(ctx, job, link)
+					})
+				}()
+			}
+			var startupApproval <-chan bool
+			if account.MissingCredential() {
+				authenticate.Disable()
+				decision := make(chan bool, 1)
+				startupApproval = decision
+				go func() { decision <- promptAuthentication() }()
+			}
 			send := func(command app.Command) {
 				result := make(chan error, 1)
 				command.Result = result
@@ -109,21 +132,16 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
-				case <-authenticate.ClickedCh:
-					if stopAuth != nil {
-						continue
+				case approved := <-startupApproval:
+					startupApproval = nil
+					authenticate.Enable()
+					if approved && account.MissingCredential() {
+						startAuth()
 					}
-					authCtx, cancelAttempt := context.WithCancel(ctx)
-					stopAuth = cancelAttempt
-					authenticate.Disable()
-					disconnect.Disable()
-					cancelAuth.Show()
-					accountItem.SetTitle("Authentication pending")
-					go func() {
-						authDone <- authenticator.Authenticate(authCtx, func(ctx context.Context, link string) error {
-							return presentApproval(ctx, job, link)
-						})
-					}()
+				case <-authenticate.ClickedCh:
+					if startupApproval == nil {
+						startAuth()
+					}
 				case <-cancelAuth.ClickedCh:
 					if stopAuth != nil {
 						stopAuth()
