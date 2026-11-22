@@ -14,6 +14,7 @@ func TestScannerCombinesLastSettledVersionsAndKeepsTheirModificationTimes(t *tes
 	hero, account := filepath.Join(folder, "HERO_01_123.pld"), filepath.Join(folder, "ACCOUNT_player_123.pld")
 	writeFixture(t, hero, "123")
 	writeFixture(t, account, "ABC")
+	setFixtureTime(t, account)
 	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	updatedTime := time.UnixMilli(1800000000456)

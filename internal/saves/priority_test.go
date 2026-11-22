@@ -83,6 +83,7 @@ func TestScannerIncludesVerificationAndUnknownPLDFiles(t *testing.T) {
 	folder := fixtureFolder(t)
 	writeFixture(t, filepath.Join(folder, "ACCOUNT_VERIFY_123.pld"), "verification")
 	writeFixture(t, filepath.Join(folder, "MISC_player.pld"), "miscellaneous")
+	writeFixture(t, filepath.Join(folder, "PRIVATE_DATA.pld"), "never upload")
 	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 
@@ -169,12 +170,14 @@ func TestScannerSupplementaryFileRecoversWithoutMetadataChange(t *testing.T) {
 	folder := fixtureFolder(t)
 	path := filepath.Join(folder, "MISC_bad.pld")
 	writeFixture(t, path, "\xff")
+	setFixtureTime(t, path)
 	scanner := NewScanner(folder, 0, DefaultLimits())
 	now := time.Now()
 
 	_, _ = scanner.Scan(context.Background(), now)
 	omitted, omittedErr := scanner.Scan(context.Background(), now)
 	writeFixture(t, path, "x")
+	setFixtureTime(t, path)
 	_, pendingErr := scanner.Scan(context.Background(), now)
 	recovered, recoveredErr := scanner.Scan(context.Background(), now)
 

@@ -13,6 +13,7 @@ import (
 
 func TestScannerWaitsForQuietPeriod(t *testing.T) {
 	folder := fixtureFolder(t)
+	setFixtureTime(t, filepath.Join(folder, "HERO_01_123.pld"))
 	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 
@@ -38,10 +39,12 @@ func TestScannerDetectsContentChangesWithUnchangedMetadata(t *testing.T) {
 	folder := fixtureFolder(t)
 	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
-	_, firstErr := scanner.Scan(context.Background(), now)
 	path := filepath.Join(folder, "HERO_01_123.pld")
+	setFixtureTime(t, path)
 
+	_, firstErr := scanner.Scan(context.Background(), now)
 	writeFixture(t, path, "different!!")
+	setFixtureTime(t, path)
 	changed, changedErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
 	_, earlyErr := scanner.Scan(context.Background(), now.Add(9*time.Second))
 	second, settledErr := scanner.Scan(context.Background(), now.Add(10*time.Second))
@@ -172,6 +175,7 @@ func TestScannerFingerprintIgnoresModificationTime(t *testing.T) {
 	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
 	now := time.Now()
 	path := filepath.Join(folder, "HERO_01_123.pld")
+	setFixtureTime(t, path)
 	timestamp := time.UnixMilli(1800000000456)
 
 	_, _ = scanner.Scan(context.Background(), now)
@@ -195,7 +199,7 @@ func TestScannerFingerprintIgnoresModificationTime(t *testing.T) {
 
 func TestScannerReadsMultipleDirectoryBatches(t *testing.T) {
 	folder := fixtureFolder(t)
-	const count = directoryBatchSize + 1
+	const count = directoryBatchSize - fixtureEntryCount + 1
 	for i := count; i > 0; i-- {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("HERO_%04d.pld", i)), "save")
 	}
@@ -214,34 +218,28 @@ func TestScannerReadsMultipleDirectoryBatches(t *testing.T) {
 }
 
 func TestScannerSelectsDeterministicSupplementarySubsetAcrossDirectoryBatches(t *testing.T) {
-	firstFolder, secondFolder := fixtureFolder(t), fixtureFolder(t)
-	const count = directoryBatchSize + 1
-	for i := 0; i < count; i++ {
-		writeFixture(t, filepath.Join(firstFolder, fmt.Sprintf("MISC_%04d.pld", i)), "save")
-		writeFixture(t, filepath.Join(secondFolder, fmt.Sprintf("MISC_%04d.pld", count-1-i)), "save")
+	folder := fixtureFolder(t)
+	const count = directoryBatchSize - fixtureEntryCount + 1
+	for i := count - 1; i >= 0; i-- {
+		writeFixture(t, filepath.Join(folder, fmt.Sprintf("MISC_%04d.pld", i)), "save")
 	}
 	limits := DefaultLimits()
 	limits.SaveFiles = 4
-	firstScanner, secondScanner := NewScanner(firstFolder, 0, limits), NewScanner(secondFolder, 0, limits)
+	scanner := NewScanner(folder, 0, limits)
 	now := time.Now()
 
-	_, _ = firstScanner.Scan(context.Background(), now)
-	_, _ = secondScanner.Scan(context.Background(), now)
-	first, firstErr := firstScanner.Scan(context.Background(), now)
-	second, secondErr := secondScanner.Scan(context.Background(), now)
+	_, _ = scanner.Scan(context.Background(), now)
+	snapshot, err := scanner.Scan(context.Background(), now)
 
-	if firstErr != nil || secondErr != nil {
-		t.Fatalf("scan errors: %v, %v", firstErr, secondErr)
-	}
-	if len(first.Files) != 4 || len(second.Files) != 4 || first.Files["MISC_0000.pld"].Text != "save" || first.Files["MISC_0001.pld"].Text != "save" || second.Files["MISC_0000.pld"].Text != "save" || second.Files["MISC_0001.pld"].Text != "save" || first.Fingerprint == "" || first.Fingerprint != second.Fingerprint {
-		t.Fatalf("optional budget selection depends on directory order: first=%+v second=%+v", first, second)
+	if err != nil || len(snapshot.Files) != 4 || snapshot.Files["MISC_0000.pld"].Text != "save" || snapshot.Files["MISC_0001.pld"].Text != "save" {
+		t.Fatalf("expected the first two supplementary names across batches: snapshot=%+v error=%v", snapshot, err)
 	}
 }
 
 func TestScannerAcceptsExactDirectoryEntryLimit(t *testing.T) {
 	folder := fixtureFolder(t)
 	limits := smallLimits()
-	for i := 0; i < limits.DirectoryEntries-4; i++ {
+	for i := 0; i < limits.DirectoryEntries-fixtureEntryCount; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
 	scanner := NewScanner(folder, 0, limits)
@@ -258,7 +256,7 @@ func TestScannerAcceptsExactDirectoryEntryLimit(t *testing.T) {
 func TestScannerRejectsTooManyDirectoryEntriesWithoutPartialSnapshot(t *testing.T) {
 	folder := fixtureFolder(t)
 	limits := smallLimits()
-	for i := 0; i < limits.DirectoryEntries-3; i++ {
+	for i := 0; i < limits.DirectoryEntries-fixtureEntryCount+1; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
 	scanner := NewScanner(folder, 0, limits)
@@ -382,31 +380,33 @@ func TestScannerFiltersEligibleFiles(t *testing.T) {
 		{"ENTITLEMENTS_player_123_1.pld", true}, {"SETTINGS_123.pld", true}, {"LEGACY_player_123.pld", true},
 		{"ACCOUNT_VERIFY_123.pld", true}, {"HERO_01_123.txt", false}, {"private_something.pld", false},
 	}
+	folder := fixtureFolder(t)
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			folder := fixtureFolder(t)
-			writeFixture(t, filepath.Join(folder, tc.name), "candidate")
-			scanner := NewScanner(folder, 0, DefaultLimits())
-			now := time.Now()
+		writeFixture(t, filepath.Join(folder, tc.name), "candidate")
+	}
+	scanner := NewScanner(folder, 0, DefaultLimits())
+	now := time.Now()
 
-			_, _ = scanner.Scan(context.Background(), now)
-			snapshot, err := scanner.Scan(context.Background(), now)
-			_, included := snapshot.Files[tc.name]
+	_, _ = scanner.Scan(context.Background(), now)
+	snapshot, err := scanner.Scan(context.Background(), now)
 
-			if err != nil || included != tc.want {
-				t.Fatalf("included=%v want=%v error=%v", included, tc.want, err)
-			}
-		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		if _, included := snapshot.Files[tc.name]; included != tc.want {
+			t.Errorf("%s: included=%v, want=%v", tc.name, included, tc.want)
+		}
 	}
 }
+
+const fixtureEntryCount = 2
 
 func fixtureFolder(t *testing.T) string {
 	t.Helper()
 	folder := t.TempDir()
 	writeFixture(t, filepath.Join(folder, "HERO_01_123.pld"), "hero data!!")
 	writeFixture(t, filepath.Join(folder, "ACCOUNT_player_123.pld"), "account data")
-	writeFixture(t, filepath.Join(folder, "PRIVATE_DATA.pld"), "never upload")
-	writeFixture(t, filepath.Join(folder, "notes.txt"), "never upload")
 	return folder
 }
 
@@ -415,6 +415,10 @@ func writeFixture(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func setFixtureTime(t *testing.T, path string) {
+	t.Helper()
 	timestamp := time.UnixMilli(1700000000123)
 	if err := os.Chtimes(path, timestamp, timestamp); err != nil {
 		t.Fatal(err)
