@@ -15,7 +15,7 @@ import (
 
 func promptAuthentication() bool {
 	title, _ := windows.UTF16PtrFromString("CWG RPG Uploader")
-	message, _ := windows.UTF16PtrFromString("Uploads require a connected Battle.net account. Authenticate now?")
+	message, _ := windows.UTF16PtrFromString("Uploads require a connected Battle.net account. Authenticate now?\n\nChoosing No exits the uploader.")
 	const yesNoQuestion = 0x04 | 0x20
 	const yes = 6
 	box := windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW")

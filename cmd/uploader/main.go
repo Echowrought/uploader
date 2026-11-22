@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -62,7 +63,7 @@ func main() {
 	if err != nil {
 		if console {
 			fmt.Fprintln(os.Stderr, err)
-		} else {
+		} else if !errors.Is(err, leaderboard.ErrAuthCancelled) {
 			showMessage("CWG RPG Uploader", err.Error())
 		}
 		os.Exit(1)

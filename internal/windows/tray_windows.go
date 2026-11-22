@@ -21,6 +21,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		return err
 	}
 	defer job.Close()
+	startupFailure := make(chan error, 1)
 	systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTooltip("CWG RPG Uploader")
@@ -95,7 +96,8 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				showError(errors.Join(startupRefreshErr, startupErr))
 			}
 			var startupApproval <-chan bool
-			if account.UploadBlock() != "" {
+			startupAuth := account.UploadBlock() != ""
+			if startupAuth {
 				decision := make(chan bool, 1)
 				startupApproval = decision
 				authenticate.Disable()
@@ -128,6 +130,11 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				}
 			}
 			refresh()
+			failStartup := func(err error) {
+				startupFailure <- err
+				cancel()
+				systray.Quit()
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -165,9 +172,11 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case approved := <-startupApproval:
 					startupApproval = nil
 					authenticate.Enable()
-					if approved && account.UploadBlock() != "" {
-						startAuth()
+					if !approved {
+						failStartup(leaderboard.ErrAuthCancelled)
+						return
 					}
+					startAuth()
 				case <-authenticate.ClickedCh:
 					if startupApproval == nil {
 						startAuth()
@@ -177,6 +186,11 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						stopAuth()
 					}
 				case err := <-authDone:
+					if startupAuth && err != nil {
+						failStartup(err)
+						return
+					}
+					startupAuth = false
 					stopAuth()
 					stopAuth = nil
 					cancelAuth.Hide()
@@ -237,7 +251,12 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			}
 		}()
 	}, cancel)
-	return nil
+	select {
+	case err := <-startupFailure:
+		return err
+	default:
+		return nil
+	}
 }
 
 func automaticUploadProblem(automatic bool, account *leaderboard.Account) string {
