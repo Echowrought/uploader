@@ -100,4 +100,4 @@ func setStartup(key registry.Key, executable string, enabled bool) error {
 	return key.SetStringValue(startupValueName, startupCommand(executable))
 }
 
-func startupCommand(executable string) string { return `"` + executable + `" --autostart` }
+func startupCommand(executable string) string { return `"` + executable + `" --windows-sign-in-launch` }

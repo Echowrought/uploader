@@ -18,7 +18,7 @@ func TestStartupRegistrationMatchesCurrentExecutable(t *testing.T) {
 	if setErr != nil || readErr != nil || commandErr != nil {
 		t.Fatalf("errors: %v, %v, %v", setErr, readErr, commandErr)
 	}
-	if !enabled || command != `"C:\Program Files\CWG RPG Uploader\uploader.exe" --autostart` {
+	if !enabled || command != `"C:\Program Files\CWG RPG Uploader\uploader.exe" --windows-sign-in-launch` {
 		t.Fatalf("incorrect registration: enabled=%v, command=%q", enabled, command)
 	}
 }
@@ -99,7 +99,7 @@ func TestRemovingMissingStartupRegistrationSucceeds(t *testing.T) {
 
 func TestRefreshStartupOnlyUpdatesOwnedLegacyRegistration(t *testing.T) {
 	for _, tc := range []struct{ name, command, want string }{
-		{"owned legacy", `"C:\CWGRPG\uploader.exe"`, `"C:\CWGRPG\uploader.exe" --autostart`},
+		{"owned legacy", `"C:\CWGRPG\uploader.exe"`, `"C:\CWGRPG\uploader.exe" --windows-sign-in-launch`},
 		{"other copy", `"C:\Other\uploader.exe"`, `"C:\Other\uploader.exe"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
