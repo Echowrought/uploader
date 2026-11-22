@@ -57,7 +57,7 @@ Ctrl+C or SIGTERM stops the app and its retries. There is no Linux tray, folder 
 | **Last success** | Shows confirmed delivery as `Today, HH:mm` or a date/time, without seconds; click for full last-upload details and any history-save error |
 | **Automatic uploads** | Enables/disables detection of new changes; accepted uploads and retries continue |
 | **Upload now** | Requests a snapshot even when automatic detection is off; still respects settling and retry delays |
-| **Authenticate…** | Shows a copyable browser link. Sign in with Battle.net and explicitly approve upload access; the tray then shows `Connected as <BattleTag>` |
+| **Authenticate… / Connected as `<BattleTag>`** | One account entry: click to connect when authentication is needed. Once connected, the same entry shows your BattleTag and is no longer clickable |
 | **Disconnect** | Removes the credential from this device and blocks future uploads until you reconnect. It does not revoke a copied credential on the server |
 | **Settings → Choose save folder...** | Changes the watched folder; already accepted work from the previous folder can still finish |
 | **Settings → Launch at Windows sign-in** | Changes the current-user Windows startup registration; no administrator rights needed |

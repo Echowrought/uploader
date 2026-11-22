@@ -9,6 +9,25 @@ import (
 	"cwgrpguploader/internal/storage"
 )
 
+func TestAccountMenuOnlyOffersAuthenticationWhenNeeded(t *testing.T) {
+	account, err := leaderboard.OpenAccount(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missing, canConnect := accountMenu(account, false)
+	pending, canStartAgain := accountMenu(account, true)
+	saveErr := account.SetCredential(storage.Credential{Token: strings.Repeat("A", 43), BattleTag: "Tester#1234"})
+	connected, canReconnect := accountMenu(account, false)
+
+	if saveErr != nil {
+		t.Fatal(saveErr)
+	}
+	if missing != "Authenticate..." || !canConnect || pending != "Authentication pending" || canStartAgain || connected != "Connected as Tester#1234" || canReconnect {
+		t.Fatalf("missing=%q (%t), pending=%q (%t), connected=%q (%t)", missing, canConnect, pending, canStartAgain, connected, canReconnect)
+	}
+}
+
 func TestAuthenticationErrorBadgeTracksWhetherAutomaticUploadsAreBlocked(t *testing.T) {
 	account, err := leaderboard.OpenAccount(t.TempDir())
 	if err != nil {

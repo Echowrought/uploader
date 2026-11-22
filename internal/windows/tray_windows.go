@@ -32,9 +32,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		automaticUploads := systray.AddMenuItemCheckbox("Automatic uploads", "Send new saves automatically; queued uploads and retries continue when off", config.Automatic)
 		upload := systray.AddMenuItem("Upload now", "Upload current saves even with Automatic uploads off")
 		systray.AddSeparator()
-		accountItem := systray.AddMenuItem(display(account.Status(), 90), "Leaderboard account")
-		accountItem.Disable()
-		authenticate := systray.AddMenuItem("Authenticate...", "Connect or reconnect to the Leaderboard")
+		accountItem := systray.AddMenuItem("Authenticate...", "Leaderboard account")
 		cancelAuth := systray.AddMenuItem("Cancel authentication", "Stop the pending authentication")
 		cancelAuth.Hide()
 		disconnect := systray.AddMenuItem("Disconnect", "Remove the local upload credential")
@@ -54,16 +52,24 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			picking := false
 			authDone := make(chan error, 1)
 			var stopAuth context.CancelFunc
+			refreshAccount := func() {
+				title, enabled := accountMenu(account, stopAuth != nil)
+				accountItem.SetTitle(display(title, 90))
+				if enabled {
+					accountItem.Enable()
+				} else {
+					accountItem.Disable()
+				}
+			}
 			startAuth := func() {
-				if stopAuth != nil || ctx.Err() != nil {
+				if stopAuth != nil || ctx.Err() != nil || account.UploadBlock() == "" {
 					return
 				}
 				authCtx, cancelAttempt := context.WithCancel(ctx)
 				stopAuth = cancelAttempt
-				authenticate.Disable()
 				disconnect.Disable()
 				cancelAuth.Show()
-				accountItem.SetTitle("Authentication pending")
+				refreshAccount()
 				go func() {
 					authDone <- authenticator.Authenticate(authCtx, func(ctx context.Context, link string) error {
 						return presentApproval(ctx, job, link)
@@ -101,6 +107,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			}
 			badged := false
 			refresh := func() {
+				refreshAccount()
 				menu := latest.Menu(time.Now())
 				problem := automaticUploadProblem(latest.Config.Automatic, account)
 				blocked := problem != ""
@@ -142,9 +149,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					return
 				case update := <-updates:
 					latest = update
-					if stopAuth == nil {
-						accountItem.SetTitle(display(account.Status(), 90))
-					}
 					refresh()
 					if update.Config.Automatic {
 						automaticUploads.Check()
@@ -165,7 +169,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
-				case <-authenticate.ClickedCh:
+				case <-accountItem.ClickedCh:
 					startAuth()
 				case <-cancelAuth.ClickedCh:
 					if stopAuth != nil {
@@ -180,9 +184,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					stopAuth()
 					stopAuth = nil
 					cancelAuth.Hide()
-					authenticate.Enable()
 					disconnect.Enable()
-					accountItem.SetTitle(display(account.Status(), 90))
 					refresh()
 					if err == nil && latest.Config.Automatic {
 						send(app.Command{Kind: "upload"})
@@ -195,7 +197,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 							showError(err)
 							continue
 						}
-						accountItem.SetTitle(display(account.Status(), 90))
 						refresh()
 					}
 				case <-startup.ClickedCh:
@@ -243,6 +244,19 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 	default:
 		return nil
 	}
+}
+
+func accountMenu(account *leaderboard.Account, pending bool) (title string, enabled bool) {
+	if pending {
+		return "Authentication pending", false
+	}
+	if account.UploadBlock() == "" {
+		return account.Status(), false
+	}
+	if account.MissingCredential() {
+		return "Authenticate...", true
+	}
+	return "Reconnect required — Authenticate...", true
 }
 
 func automaticUploadProblem(automatic bool, account *leaderboard.Account) string {
