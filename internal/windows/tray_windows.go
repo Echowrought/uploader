@@ -173,10 +173,16 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						showError(err)
 					}
 				case <-disconnect.ClickedCh:
-					if stopAuth == nil {
-						showError(account.Disconnect())
+					if stopAuth == nil && !account.MissingCredential() {
+						if err := account.Disconnect(); err != nil {
+							showError(err)
+							continue
+						}
 						accountItem.SetTitle(display(account.Status(), 90))
 						refresh()
+						if latest.Config.Automatic {
+							send(app.Command{Kind: "upload"})
+						}
 					}
 				case <-startup.ClickedCh:
 					// Query again so external registration changes are respected.

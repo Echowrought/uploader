@@ -39,7 +39,7 @@ Extract the Linux archive and first inspect your saves without uploading:
 ./cwg-rpg-uploader-console --dry-run --save-folder "/absolute/path/to/Warcraft III/CustomMapData/CWG2"
 ```
 
-Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, connect your account, then start the uploader:
+Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, start the uploader. Connecting your account with `--authenticate` is optional:
 
 ```sh
 ./cwg-rpg-uploader-console --authenticate
@@ -58,7 +58,7 @@ Ctrl+C or SIGTERM stops the app and its retries. There is no Linux tray, folder 
 | **Automatic uploads** | Enables/disables detection of new changes; accepted uploads and retries continue |
 | **Upload now** | Requests a snapshot even when automatic detection is off; still respects settling and retry delays |
 | **Authenticate…** | Shows a copyable browser link. Sign in with Battle.net and explicitly approve upload access; the tray then shows `Connected as <BattleTag>` |
-| **Disconnect** | Removes the credential from this device. It does not revoke a copied credential on the server |
+| **Disconnect** | Removes the credential from this device; future uploads are anonymous. It does not revoke a copied credential on the server |
 | **Settings → Choose save folder...** | Changes the watched folder; already accepted work from the previous folder can still finish |
 | **Settings → Launch at Windows sign-in** | Changes the current-user Windows startup registration; no administrator rights needed |
 | **Open leaderboard** | Opens the public leaderboard |
@@ -79,7 +79,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Account connection
 
-Uploads require a connected Leaderboard account. The tray never prompts for authentication at startup. If no credential is saved, the console prints the `--authenticate` command without waiting for input. If authentication blocks automatic uploads, the tray icon shows a red × and its tooltip says why; Windows may also show a one-time notification when the blockage begins. The uploader never starts login without your confirmation and never falls back to anonymous uploads. If a saved credential is invalid or rejected, choose **Authenticate…** in the tray or stop the console app and rerun it with `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+The uploader submits saves anonymously when no account is connected. The tray never prompts for authentication at startup. If a saved credential is invalid or rejected, uploads stop rather than falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why; Windows may also show a one-time notification. Reconnect via **Authenticate…** or `--authenticate`, or explicitly disconnect to resume anonymous uploads. The uploader never starts login without your confirmation. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
 
 ## Configuration and logs
 

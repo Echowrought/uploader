@@ -20,7 +20,7 @@ func TestAuthenticationErrorBadgeTracksWhetherAutomaticUploadsAreBlocked(t *test
 	saveErr := account.SetCredential(storage.Credential{Token: strings.Repeat("A", 43), BattleTag: "Tester#1234"})
 	connected := automaticUploadProblem(true, account)
 
-	if missing == "" || paused != "" || saveErr != nil || connected != "" {
+	if missing != "" || paused != "" || saveErr != nil || connected != "" {
 		t.Fatalf("missing=%q paused=%q save=%v connected=%q", missing, paused, saveErr, connected)
 	}
 }
