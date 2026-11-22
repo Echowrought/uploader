@@ -10,6 +10,49 @@ import (
 	"cwgrpguploader/internal/leaderboard"
 )
 
+// Poll while the approval window is open. A failed or cancelled window stops
+// polling; a completed attempt closes the window even if the link was copied.
+func authenticateWithApproval(ctx context.Context, authenticate func(context.Context, func(context.Context, string) error) error, present func(context.Context, string) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type approval struct {
+		ctx  context.Context
+		link string
+	}
+	ready := make(chan approval, 1)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- authenticate(ctx, func(ctx context.Context, link string) error {
+			ready <- approval{ctx, link}
+			return nil
+		})
+	}()
+
+	var request approval
+	select {
+	case request = <-ready:
+	case err := <-finished:
+		return err
+	}
+	window := make(chan error, 1)
+	go func() { window <- present(request.ctx, request.link) }()
+	select {
+	case err := <-finished:
+		cancel()
+		<-window
+		return err
+	case err := <-window:
+		// Opening the browser closes only the window. If the attempt ended
+		// first, its context closes the window and its result takes priority.
+		if err == nil || request.ctx.Err() != nil {
+			return <-finished
+		}
+		cancel()
+		<-finished
+		return err
+	}
+}
+
 // Only the public browser link goes to the dialog subprocess, never either token.
 func presentApproval(ctx context.Context, job *subprocessJob, link string) error {
 	executable, err := exec.LookPath("powershell.exe")
@@ -36,7 +79,7 @@ $url.Font = New-Object Drawing.Font('Consolas', 9)
 $url.Text = $link.Replace('?', '?' + [Environment]::NewLine)
 $instructions = New-Object Windows.Forms.Label
 $instructions.SetBounds(12, 118, 596, 34)
-$instructions.Text = 'Copy link closes this window. Paste the link into your browser to continue; the uploader will wait for approval.'
+$instructions.Text = 'Open the link or copy it into your browser. The uploader waits for approval; Cancel stops the attempt.'
 $open = New-Object Windows.Forms.Button
 $open.SetBounds(12, 164, 164, 28)
 $open.Text = 'Open in default browser'
@@ -46,12 +89,19 @@ $copy = New-Object Windows.Forms.Button
 $copy.SetBounds(184, 164, 90, 28)
 $copy.Text = 'Copy link'
 $copy.Add_Click({
-  try { [Windows.Forms.Clipboard]::SetText($link) }
-  catch {
-    [void][Windows.Forms.MessageBox]::Show($f, 'Could not copy the link. Try again or open it in the browser.', $f.Text)
-    return
+  param($sender, $eventArgs)
+  if (-not $sender.Enabled) { return }
+  $sender.Enabled = $false
+  try {
+    $data = New-Object Windows.Forms.DataObject
+    $data.SetText($link)
+    [Windows.Forms.Clipboard]::SetDataObject($data, $true, 5, 50)
+    $instructions.Text = 'Link copied. Paste it into your browser and approve upload access. Waiting for approval...'
   }
-  $f.DialogResult = [Windows.Forms.DialogResult]::Retry
+  catch {
+    $instructions.Text = 'Could not copy the link. Try again or choose Open in default browser.'
+    $sender.Enabled = $true
+  }
 })
 $cancel = New-Object Windows.Forms.Button
 $cancel.SetBounds(282, 164, 85, 28)
@@ -77,9 +127,9 @@ $f.Dispose()`
 			return errors.New("could not open the default browser")
 		}
 		return nil
-	case "Retry":
-		return nil
-	default:
+	case "Cancel":
 		return leaderboard.ErrAuthCancelled
+	default:
+		return errors.New("authentication window closed unexpectedly")
 	}
 }
