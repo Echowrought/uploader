@@ -18,6 +18,7 @@ import (
 )
 
 func main() {
+	autostart := flag.Bool("autostart", false, "launch the Windows tray without an authentication prompt")
 	authenticate := flag.Bool("authenticate", false, "connect to the Leaderboard without scanning or uploading saves (console)")
 	dryRun := flag.Bool("dry-run", false, "inspect one stable snapshot without uploading; use the console binary for terminal output")
 	var saveFolder string
@@ -56,7 +57,7 @@ func main() {
 	if *authenticate {
 		err = runAuthentication()
 	} else {
-		err = run(console, *dryRun, saveFolder)
+		err = run(console, *dryRun, *autostart, saveFolder)
 	}
 	if err != nil {
 		if console {
@@ -68,7 +69,7 @@ func main() {
 	}
 }
 
-func run(console, dryRun bool, saveFolder string) error {
+func run(console, dryRun, autostart bool, saveFolder string) error {
 	configDir, stateDir, err := dataFolders()
 	if err != nil {
 		return err
@@ -156,7 +157,7 @@ func run(console, dryRun bool, saveFolder string) error {
 	if console {
 		return runConsole(ctx, cancel, application, done, dryRun)
 	}
-	err = runTray(ctx, cancel, application, configDir, account, leaderboard.NewAuthenticator(client))
+	err = runTray(ctx, cancel, application, configDir, account, leaderboard.NewAuthenticator(client), autostart)
 	cancel()
 	<-done
 	return err

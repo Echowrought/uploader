@@ -4,7 +4,26 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"cwgrpguploader/internal/leaderboard"
+	"cwgrpguploader/internal/storage"
 )
+
+func TestAuthenticationErrorBadgeTracksWhetherAutomaticUploadsAreBlocked(t *testing.T) {
+	account, err := leaderboard.OpenAccount(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missing := automaticUploadProblem(true, account)
+	paused := automaticUploadProblem(false, account)
+	saveErr := account.SetCredential(storage.Credential{Token: strings.Repeat("A", 43), BattleTag: "Tester#1234"})
+	connected := automaticUploadProblem(true, account)
+
+	if missing == "" || paused != "" || saveErr != nil || connected != "" {
+		t.Fatalf("missing=%q paused=%q save=%v connected=%q", missing, paused, saveErr, connected)
+	}
+}
 
 func TestTooltipFitsWindowsUTF16Buffer(t *testing.T) {
 	cases := []struct {

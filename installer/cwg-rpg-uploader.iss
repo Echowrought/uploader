@@ -52,7 +52,7 @@ Name: "{group}\Read me"; Filename: "{app}\README.md"
 Name: "{autodesktop}\CWG RPG Uploader"; Filename: "{app}\cwg-rpg-uploader.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CWGRPGUploader"; ValueData: """{app}\cwg-rpg-uploader.exe"""; Tasks: startup
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CWGRPGUploader"; ValueData: """{app}\cwg-rpg-uploader.exe"" --autostart"; Tasks: startup
 
 [Run]
 Filename: "{app}\cwg-rpg-uploader.exe"; WorkingDir: "{app}"; Description: "Launch CWG RPG Uploader (automatic uploads follow your settings)"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -68,20 +68,26 @@ const
 var
   StartupChoiceInitialized: Boolean;
 
-procedure RemoveOwnedStartupEntry;
+function OwnsStartupEntry: Boolean;
 var
-  Command: String;
+  Command, Executable: String;
+begin
+  Executable := '"' + ExpandConstant('{app}\cwg-rpg-uploader.exe') + '"';
+  Result := RegQueryStringValue(HKCU, StartupKey, StartupValue, Command) and
+    ((CompareText(Trim(Command), Executable) = 0) or
+     (CompareText(Trim(Command), Executable + ' --autostart') = 0));
+end;
+
+procedure RemoveOwnedStartupEntry;
 begin
   // Leave a registration belonging to a separate portable copy alone.
-  if RegQueryStringValue(HKCU, StartupKey, StartupValue, Command) and
-     (CompareText(Trim(Command), '"' + ExpandConstant('{app}\cwg-rpg-uploader.exe') + '"') = 0) then
+  if OwnsStartupEntry then
     if not RegDeleteValue(HKCU, StartupKey, StartupValue) then
       RaiseException('Could not remove the sign-in startup entry.');
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 var
-  Command: String;
   I: Integer;
 begin
   // Tasks are populated when this page is shown, not in InitializeWizard.
@@ -97,8 +103,7 @@ begin
       Exit;
 
   // The registry, not a previous installer's remembered tasks, is authoritative.
-  if RegQueryStringValue(HKCU, StartupKey, StartupValue, Command) and
-     (CompareText(Trim(Command), '"' + ExpandConstant('{app}\cwg-rpg-uploader.exe') + '"') = 0) then
+  if OwnsStartupEntry then
     WizardSelectTasks('startup')
   else
     WizardSelectTasks('!startup');

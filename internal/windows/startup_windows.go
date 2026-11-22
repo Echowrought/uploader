@@ -46,6 +46,37 @@ func SetStartup(enabled bool) error {
 	return setStartup(key, executable, enabled)
 }
 
+// RefreshStartup adds the launch marker to older registrations owned by this executable.
+func RefreshStartup() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	key, err := registry.OpenKey(registry.CURRENT_USER, startupKeyPath, registry.QUERY_VALUE|registry.SET_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	return refreshStartup(key, executable)
+}
+
+func refreshStartup(key registry.Key, executable string) error {
+	command, _, err := key.GetStringValue(startupValueName)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(command), `"`+executable+`"`) {
+		return setStartup(key, executable, true)
+	}
+	return nil
+}
+
 func startupEnabled(key registry.Key, executable string) (bool, error) {
 	command, _, err := key.GetStringValue(startupValueName)
 	if errors.Is(err, registry.ErrNotExist) {
@@ -54,7 +85,8 @@ func startupEnabled(key registry.Key, executable string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return strings.EqualFold(strings.TrimSpace(command), `"`+executable+`"`), nil
+	command = strings.TrimSpace(command)
+	return strings.EqualFold(command, `"`+executable+`"`) || strings.EqualFold(command, startupCommand(executable)), nil
 }
 
 func setStartup(key registry.Key, executable string, enabled bool) error {
@@ -65,5 +97,7 @@ func setStartup(key registry.Key, executable string, enabled bool) error {
 		}
 		return err
 	}
-	return key.SetStringValue(startupValueName, `"`+executable+`"`)
+	return key.SetStringValue(startupValueName, startupCommand(executable))
 }
+
+func startupCommand(executable string) string { return `"` + executable + `" --autostart` }

@@ -32,6 +32,16 @@ func (a *Account) MissingCredential() bool {
 	return !a.rejected && !a.credential.Valid()
 }
 
+// UploadBlock describes the authentication blocker, if any, without checking the network.
+func (a *Account) UploadBlock() string {
+	if _, err := a.uploadToken(); err == ErrAuthenticationRejected {
+		return "Reconnect required"
+	} else if err == ErrAuthenticationRequired {
+		return "Connect your Leaderboard account"
+	}
+	return ""
+}
+
 // Status never returns secrets and does not make network requests.
 func (a *Account) Status() string {
 	a.mu.Lock()

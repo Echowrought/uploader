@@ -15,7 +15,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator) error {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, autostart bool) error {
 	job, err := newSubprocessJob()
 	if err != nil {
 		return err
@@ -41,6 +41,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		board := systray.AddMenuItem("Open leaderboard", "")
 		settings := systray.AddMenuItem("Settings", "")
 		folder := settings.AddSubMenuItem("Choose save folder...", "")
+		startupRefreshErr := RefreshStartup()
 		startupEnabled, startupErr := StartupEnabled()
 		startup := settings.AddSubMenuItemCheckbox("Launch at Windows sign-in", "Register this executable; Windows startup policy may override it", startupEnabled)
 		configuration := settings.AddSubMenuItem("Open config.json (restart to reload)", "")
@@ -69,7 +70,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				}()
 			}
 			var startupApproval <-chan bool
-			if account.MissingCredential() {
+			if !autostart && account.MissingCredential() {
 				authenticate.Disable()
 				decision := make(chan bool, 1)
 				startupApproval = decision
@@ -97,7 +98,36 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					go Message("CWG RPG Uploader", err.Error())
 				}
 			}
-			showError(startupErr)
+			if !autostart {
+				showError(errors.Join(startupRefreshErr, startupErr))
+			}
+			badged := false
+			refresh := func() {
+				menu := latest.Menu(time.Now())
+				problem := automaticUploadProblem(latest.Config.Automatic, account)
+				blocked := problem != ""
+				if blocked != badged {
+					badged = blocked
+					if blocked {
+						systray.SetIcon(errorTrayIcon())
+						if autostart || !account.MissingCredential() {
+							notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
+						}
+					} else {
+						systray.SetIcon(trayIcon)
+					}
+				}
+				detectionItem.SetTitle(display(menu.Detection.Title, 90))
+				historyItem.SetTitle(display(menu.History.Title, 90))
+				if blocked {
+					uploadItem.SetTitle("Backups not uploading")
+					systray.SetTooltip(tooltip("Backups not uploading — " + problem))
+				} else {
+					uploadItem.SetTitle(display(menu.Upload.Title, 90))
+					systray.SetTooltip(tooltip("CWG RPG: " + menu.Detection.Title + "; " + menu.Upload.Title + "; " + menu.History.Title))
+				}
+			}
+			refresh()
 			for {
 				select {
 				case <-ctx.Done():
@@ -112,11 +142,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					if stopAuth == nil {
 						accountItem.SetTitle(display(account.Status(), 90))
 					}
-					menu := update.Menu(time.Now())
-					detectionItem.SetTitle(display(menu.Detection.Title, 90))
-					uploadItem.SetTitle(display(menu.Upload.Title, 90))
-					historyItem.SetTitle(display(menu.History.Title, 90))
-					systray.SetTooltip(tooltip("CWG RPG: " + menu.Detection.Title + "; " + menu.Upload.Title + "; " + menu.History.Title))
+					refresh()
 					if update.Config.Automatic {
 						automaticUploads.Check()
 					} else {
@@ -125,7 +151,11 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case <-detectionItem.ClickedCh:
 					go Message("CWG RPG Uploader — Detection", latest.Menu(time.Now()).Detection.Details)
 				case <-uploadItem.ClickedCh:
-					go Message("CWG RPG Uploader — Upload", latest.Menu(time.Now()).Upload.Details)
+					if problem := automaticUploadProblem(latest.Config.Automatic, account); problem != "" {
+						go Message("CWG RPG Uploader — Upload", "Backups not uploading — "+problem)
+					} else {
+						go Message("CWG RPG Uploader — Upload", latest.Menu(time.Now()).Upload.Details)
+					}
 				case <-historyItem.ClickedCh:
 					go Message("CWG RPG Uploader — Last success", latest.Menu(time.Now()).History.Details)
 				case <-automaticUploads.ClickedCh:
@@ -153,6 +183,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					authenticate.Enable()
 					disconnect.Enable()
 					accountItem.SetTitle(display(account.Status(), 90))
+					refresh()
 					if err == nil && latest.Config.Automatic {
 						send(app.Command{Kind: "upload"})
 					} else if !errors.Is(err, context.Canceled) && !errors.Is(err, leaderboard.ErrAuthCancelled) {
@@ -162,6 +193,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					if stopAuth == nil {
 						showError(account.Disconnect())
 						accountItem.SetTitle(display(account.Status(), 90))
+						refresh()
 					}
 				case <-startup.ClickedCh:
 					// Query again so external registration changes are respected.
@@ -203,6 +235,13 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		}()
 	}, cancel)
 	return nil
+}
+
+func automaticUploadProblem(automatic bool, account *leaderboard.Account) string {
+	if !automatic {
+		return ""
+	}
+	return account.UploadBlock()
 }
 
 type folderResult struct {
