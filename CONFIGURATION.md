@@ -48,7 +48,7 @@ different folder and cause its snapshot to be uploaded separately.
 **To prevent automatic uploads before the first normal launch:** create the
 application-data folder and `config.json` yourself, use the example with your
 actual save path, and set `upload_automatically` to `false`. Do not launch the app
-first to obtain the example: default automatic uploads include existing saves even without a connected account.
+first to obtain the example: default automatic uploads include existing saves once a Battle.net account is connected.
 **Upload now** can still request an upload with automatic detection disabled.
 
 In either console, begin with `--dry-run --save-folder PATH` if you want the app to create

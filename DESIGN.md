@@ -41,7 +41,7 @@ Content-Type: application/json
 Authorization: Bearer <upload-token>
 ```
 
-An explicit tray or console action starts device authorization with `/api/uploader/begin-auth`. The uploader displays only the approval link and sends the private polling code only to `/api/uploader/poll-auth`. The browser session and explicit account approval are managed by the Leaderboard. The uploader stores the returned upload-only token in a private per-user file, does not follow API redirects, and sends anonymous uploads only when no credential is saved. It does not fall back after a credential is rejected.
+An explicit tray or console action starts device authorization with `/api/uploader/begin-auth`. The uploader displays only the approval link and sends the private polling code only to `/api/uploader/poll-auth`. The browser session and explicit account approval are managed by the Leaderboard. The uploader stores the returned upload-only token in a private per-user file, does not follow API redirects, and blocks uploads if the credential is missing or rejected.
 
 Example request structure:
 
@@ -62,7 +62,7 @@ Example request structure:
 
 The keys are file basenames. `mtime` is the file modification time in Unix milliseconds.
 
-The server validates authenticated submissions against the token-bound account. Anonymous submissions omit the authorization header. The client reads `user_hash`, `player`, `heroes`, `replaced`, and `kept_newer`; an accepted submission can report zero heroes when the server kept all newer saves.
+The server validates submissions against the token-bound account. The client reads `user_hash`, `player`, `heroes`, `replaced`, and `kept_newer`; an accepted submission can report zero heroes when the server kept all newer saves.
 
 ## User Experience
 

@@ -7,14 +7,31 @@ import (
 	"testing"
 )
 
-func TestOpenAccountWithNoCredentialAllowsAnonymousUploads(t *testing.T) {
+func TestOpenAccountWithNoCredentialRequiresAuthentication(t *testing.T) {
 	dir := t.TempDir()
 
 	account, err := OpenAccount(dir)
 	token, uploadErr := account.uploadToken()
 
-	if err != nil || uploadErr != nil || token != "" || !account.MissingCredential() {
+	if err != nil || !errors.Is(uploadErr, ErrAuthenticationRequired) || token != "" || !account.MissingCredential() {
 		t.Fatalf("open=%v, upload=%v, missing=%t", err, uploadErr, account.MissingCredential())
+	}
+}
+
+func TestDisconnectRemovesCredentialAndBlocksUploads(t *testing.T) {
+	dir := t.TempDir()
+	saveTestCredential(t, dir)
+	account, err := OpenAccount(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disconnectErr := account.Disconnect()
+	_, uploadErr := account.uploadToken()
+	restored, openErr := OpenAccount(dir)
+
+	if disconnectErr != nil || !errors.Is(uploadErr, ErrAuthenticationRequired) || openErr != nil || !restored.MissingCredential() {
+		t.Fatalf("disconnect=%v, upload=%v, open=%v, missing=%t", disconnectErr, uploadErr, openErr, restored.MissingCredential())
 	}
 }
 

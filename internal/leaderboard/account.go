@@ -9,7 +9,10 @@ import (
 	"cwgrpguploader/internal/storage"
 )
 
-var ErrAuthenticationRejected = errors.New("authentication rejected; reconnect with Authenticate or --authenticate")
+var (
+	ErrAuthenticationRequired = errors.New("authentication required; choose Authenticate or run --authenticate")
+	ErrAuthenticationRejected = errors.New("authentication rejected; reconnect with Authenticate or --authenticate")
+)
 
 type Account struct {
 	dir        string
@@ -35,11 +38,15 @@ func (a *Account) MissingCredential() bool {
 
 // UploadBlock describes the authentication blocker, if any, without checking the network.
 func (a *Account) UploadBlock() string {
-	if _, err := a.uploadToken(); err == ErrAuthenticationRejected {
+	_, err := a.uploadToken()
+	switch err {
+	case ErrAuthenticationRequired:
+		return "Connect your Leaderboard account"
+	case ErrAuthenticationRejected:
 		return "Reconnect required"
-
+	default:
+		return ""
 	}
-	return ""
 }
 
 // Status never returns secrets and does not make network requests.
@@ -85,7 +92,7 @@ func (a *Account) uploadToken() (string, error) {
 		return "", ErrAuthenticationRejected
 	}
 	if !a.credential.Valid() {
-		return "", nil // No stored credential: send an anonymous upload.
+		return "", ErrAuthenticationRequired
 	}
 	return a.credential.Token, nil
 }

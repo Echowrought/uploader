@@ -122,8 +122,8 @@ func run(console, dryRun, autostart bool, saveFolder string) error {
 		}
 		if console {
 			fmt.Fprintln(os.Stdout, account.Status())
-			if account.MissingCredential() {
-				fmt.Fprintln(os.Stdout, "Uploads are anonymous. To connect an account, stop the uploader and run it with --authenticate.")
+			if account.UploadBlock() != "" {
+				fmt.Fprintln(os.Stdout, "Uploads are blocked. To connect a Battle.net account, stop the uploader and run it with --authenticate.")
 			}
 		}
 	}
@@ -217,7 +217,7 @@ func ensureUploadNotice(dir string, config *storage.Config, dryRun bool, show fu
 	if config.UploadNoticeShown {
 		return nil
 	}
-	message := "This app sends CWG RPG saves to a third-party public leaderboard. If Automatic uploads is enabled, existing saves upload even without a connected Leaderboard account. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder in config.json, or through the Windows tray. Already queued uploads and retries continue when Automatic uploads is off."
+	message := "This app sends CWG RPG saves to a third-party public leaderboard. After you connect a Battle.net account, existing saves upload if Automatic uploads is enabled. It never modifies game saves.\n\nYou can change Automatic uploads and the save folder in config.json, or through the Windows tray. Already queued uploads and retries continue when Automatic uploads is off."
 	message += fmt.Sprintf("\n\nAutomatic uploads configured: %t\nConfiguration directory: %s", config.Automatic, dir)
 	if dryRun {
 		message = "Dry run: no saves will be uploaded. This notice will appear again before the first normal run.\n\n" + message

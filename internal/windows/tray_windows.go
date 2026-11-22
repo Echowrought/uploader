@@ -94,6 +94,13 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			if !autostart {
 				showError(errors.Join(startupRefreshErr, startupErr))
 			}
+			var startupApproval <-chan bool
+			if account.UploadBlock() != "" {
+				decision := make(chan bool, 1)
+				startupApproval = decision
+				authenticate.Disable()
+				go func() { decision <- promptAuthentication() }()
+			}
 			badged := false
 			refresh := func() {
 				menu := latest.Menu(time.Now())
@@ -103,7 +110,9 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					badged = blocked
 					if blocked {
 						systray.SetIcon(errorTrayIcon())
-						notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
+						if startupApproval == nil {
+							notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
+						}
 					} else {
 						systray.SetIcon(trayIcon)
 					}
@@ -153,8 +162,16 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
+				case approved := <-startupApproval:
+					startupApproval = nil
+					authenticate.Enable()
+					if approved && account.UploadBlock() != "" {
+						startAuth()
+					}
 				case <-authenticate.ClickedCh:
-					startAuth()
+					if startupApproval == nil {
+						startAuth()
+					}
 				case <-cancelAuth.ClickedCh:
 					if stopAuth != nil {
 						stopAuth()
@@ -180,9 +197,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						}
 						accountItem.SetTitle(display(account.Status(), 90))
 						refresh()
-						if latest.Config.Automatic {
-							send(app.Command{Kind: "upload"})
-						}
 					}
 				case <-startup.ClickedCh:
 					// Query again so external registration changes are respected.
