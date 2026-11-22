@@ -62,19 +62,18 @@ func (e *UploadError) Error() string { return e.Message }
 func (e *UploadError) Unwrap() error { return e.Cause }
 
 func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
-	var token string
-	if c.account != nil {
-		var err error
-		token, err = c.account.uploadToken()
-		if err != nil {
-			return Result{}, err
-		}
+	if c.account == nil {
+		return Result{}, ErrAuthenticationRequired
+	}
+	token, err := c.account.uploadToken()
+	if err != nil {
+		return Result{}, err
 	}
 	if !trustedURL(c.URL, BaseURL, false) {
 		return Result{}, errors.New("invalid Leaderboard destination")
 	}
 	result, err := c.upload(ctx, request, token)
-	if token != "" && errors.Is(err, ErrAuthenticationRejected) {
+	if errors.Is(err, ErrAuthenticationRejected) {
 		c.account.reject(token)
 	}
 	return result, err
@@ -91,9 +90,7 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "CWGRPGUploader/"+buildinfo.Version)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	response, err := c.doPrivate(req)
 	if err != nil {
 		retry := true
@@ -103,15 +100,12 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 		return Result{}, &UploadError{Message: "upload connection failed: " + redactUploadError(err, token), Cause: err, Retry: retry}
 	}
 	defer response.Body.Close()
-	if token != "" && response.StatusCode == http.StatusUnauthorized {
+	if response.StatusCode == http.StatusUnauthorized {
 		return Result{}, ErrAuthenticationRejected
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseSizeLimit+1))
 	// Do not expose echoed credentials in diagnostics, including at the truncation boundary.
-	diagnostic := data
-	if token != "" {
-		diagnostic = bytes.ReplaceAll(data, []byte(token), []byte("[redacted]"))
-	}
+	diagnostic := bytes.ReplaceAll(data, []byte(token), []byte("[redacted]"))
 	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
 		return Result{}, &UploadError{Message: "read upload response: " + ctxErr.Error(), Cause: ctxErr}
 	}
@@ -143,9 +137,6 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 }
 
 func redactUploadError(err error, token string) string {
-	if token == "" {
-		return err.Error()
-	}
 	return strings.ReplaceAll(err.Error(), token, "[redacted]")
 }
 

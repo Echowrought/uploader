@@ -170,21 +170,18 @@ func TestOnlyOneAuthenticationAttemptCanRunAtATime(t *testing.T) {
 	}
 }
 
-func TestUploadWithoutCredentialSendsAnonymousRequest(t *testing.T) {
-	var calls []observedRequest
-	client := authClient(func(req *http.Request) *http.Response {
-		calls = append(calls, observe(req, time.Now()))
-		return authReply(200, `{"player":"Tester#1234","user_hash":42,"heroes":1}`)
+func TestUploadWithoutCredentialDoesNotSendRequest(t *testing.T) {
+	calls := 0
+	client := authClient(func(*http.Request) *http.Response {
+		calls++
+		return authReply(200, `{}`)
 	})
 	client.account, _ = OpenAccount(t.TempDir())
 
-	result, err := client.Upload(t.Context(), UploadRequest{})
+	_, err := client.Upload(t.Context(), UploadRequest{})
 
-	if err != nil || result.Heroes != 1 {
-		t.Fatalf("upload failed: %v", err)
-	}
-	if len(calls) != 1 || calls[0].url != BaseURL+"/api/uploader/upload" || calls[0].authorization != "" {
-		t.Fatal("anonymous upload used the wrong destination or included authorization")
+	if !errors.Is(err, ErrAuthenticationRequired) || calls != 0 {
+		t.Fatalf("error=%v, HTTP requests=%d", err, calls)
 	}
 }
 
