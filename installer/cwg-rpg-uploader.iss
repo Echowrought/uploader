@@ -52,7 +52,7 @@ Name: "{group}\Read me"; Filename: "{app}\README.md"
 Name: "{autodesktop}\CWG RPG Uploader"; Filename: "{app}\cwg-rpg-uploader.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CWGRPGUploader"; ValueData: """{app}\cwg-rpg-uploader.exe"" --autostart"; Tasks: startup
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CWGRPGUploader"; ValueData: """{app}\cwg-rpg-uploader.exe"" --windows-sign-in-launch"; Tasks: startup
 
 [Run]
 Filename: "{app}\cwg-rpg-uploader.exe"; WorkingDir: "{app}"; Description: "Launch CWG RPG Uploader (automatic uploads follow your settings)"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -75,7 +75,7 @@ begin
   Executable := '"' + ExpandConstant('{app}\cwg-rpg-uploader.exe') + '"';
   Result := RegQueryStringValue(HKCU, StartupKey, StartupValue, Command) and
     ((CompareText(Trim(Command), Executable) = 0) or
-     (CompareText(Trim(Command), Executable + ' --autostart') = 0));
+     (CompareText(Trim(Command), Executable + ' --windows-sign-in-launch') = 0));
 end;
 
 procedure RemoveOwnedStartupEntry;

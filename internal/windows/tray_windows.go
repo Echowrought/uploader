@@ -15,7 +15,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, autostart bool) error {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, windowsSignInLaunch bool) error {
 	job, err := newSubprocessJob()
 	if err != nil {
 		return err
@@ -91,7 +91,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					go Message("CWG RPG Uploader", err.Error())
 				}
 			}
-			if !autostart {
+			if !windowsSignInLaunch {
 				showError(errors.Join(startupRefreshErr, startupErr))
 			}
 			var startupApproval <-chan bool
