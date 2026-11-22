@@ -95,13 +95,9 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			if !windowsSignInLaunch {
 				showError(errors.Join(startupRefreshErr, startupErr))
 			}
-			var startupApproval <-chan bool
 			startupAuth := account.UploadBlock() != ""
 			if startupAuth {
-				decision := make(chan bool, 1)
-				startupApproval = decision
-				authenticate.Disable()
-				go func() { decision <- promptAuthentication() }()
+				startAuth()
 			}
 			badged := false
 			refresh := func() {
@@ -112,7 +108,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					badged = blocked
 					if blocked {
 						systray.SetIcon(errorTrayIcon())
-						if startupApproval == nil {
+						if !startupAuth {
 							notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
 						}
 					} else {
@@ -169,18 +165,8 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
-				case approved := <-startupApproval:
-					startupApproval = nil
-					authenticate.Enable()
-					if !approved {
-						failStartup(leaderboard.ErrAuthCancelled)
-						return
-					}
-					startAuth()
 				case <-authenticate.ClickedCh:
-					if startupApproval == nil {
-						startAuth()
-					}
+					startAuth()
 				case <-cancelAuth.ClickedCh:
 					if stopAuth != nil {
 						stopAuth()
