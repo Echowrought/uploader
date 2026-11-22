@@ -100,6 +100,8 @@ $copy.Add_Click({
   }
   catch {
     $instructions.Text = 'Could not copy the link. Try again or choose Open in default browser.'
+  }
+  finally {
     $sender.Enabled = $true
   }
 })
