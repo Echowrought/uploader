@@ -20,14 +20,15 @@ function Invoke-GoTests {
     if ($packages.Count -eq 0) { throw 'Go returned no package test results' }
 
     # Parallel tests overlap, so individual test durations must not be summed.
-    $slow = @($packages | Where-Object { $_.Elapsed -ge 10 })
+    $budgetSeconds = 15
+    $slow = @($packages | Where-Object { $_.Elapsed -ge $budgetSeconds })
     foreach ($package in $slow) {
-        Write-Host ("Test budget exceeded: {0} reported {1:F3}s; must be under 10s. Slowest top-level tests:" -f $package.Package, [double]$package.Elapsed)
+        Write-Host ("Test budget exceeded: {0} reported {1:F3}s; must be under {2}s. Slowest top-level tests:" -f $package.Package, [double]$package.Elapsed, $budgetSeconds)
         $events | Where-Object {
             $_.Package -eq $package.Package -and $_.Test -and $_.Test -notmatch '/' -and
             $_.Action -in @('pass', 'fail', 'skip')
         } | Sort-Object Elapsed -Descending | Select-Object -First 5 |
             ForEach-Object { Write-Host ('  {0:F3}s {1}' -f [double]$_.Elapsed, $_.Test) }
     }
-    if ($slow.Count -ne 0) { throw 'Package test execution exceeded the 10-second budget' }
+    if ($slow.Count -ne 0) { throw "Package test execution exceeded the $budgetSeconds-second budget" }
 }

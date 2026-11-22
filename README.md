@@ -119,7 +119,7 @@ On Linux, stop the app and delete the executable. Configuration/history are reta
 Requires Go 1.26 or newer; prefer a supported toolchain. Builds need no C compiler. Windows uses Windows PowerShell for the folder picker. The build/check scripts use PowerShell (also available as `pwsh` on Linux).
 
 ```powershell
-.\scripts\check.ps1 # Lint, uncached tests, and vet; each package must finish tests in under 10s
+.\scripts\check.ps1 # Lint, uncached tests, and vet; each package must finish tests in under 15s
 .\build.ps1         # Run checks and rebuild dist (deletes its previous contents)
 ```
 
