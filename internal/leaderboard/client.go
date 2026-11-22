@@ -14,7 +14,7 @@ import (
 	"cwgrpguploader/internal/buildinfo"
 )
 
-const BaseURL = "https://cwg2-leaderboard.rskiland.workers.dev"
+const BaseURL = "https://cwg.echowrought.com/leaderboard"
 const responseSizeLimit = (1 << 20)
 const errorBodyLogLimit = 4 << 10
 const errorBodyExcerptLimit = 512
