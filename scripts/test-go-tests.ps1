@@ -6,17 +6,17 @@ function Test-GoTestReporting {
         @{
             Name = 'Parallel test and package times are not summed'; BuildArguments = @('./...'); Fails = $false; Contains = 'example/b'
             Report = @(
-                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestFirst'; Elapsed = 6 },
-                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSecond'; Elapsed = 6 },
-                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 9.999 },
+                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestFirst'; Elapsed = 10 },
+                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSecond'; Elapsed = 10 },
+                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 14.999 },
                 @{ Action = 'pass'; Package = 'example/b'; Elapsed = 9 }
             )
         },
         @{
-            Name = 'Exactly ten seconds fails'; BuildArguments = @('./...'); Fails = $true; Contains = 'TestSlow'
+            Name = 'Exactly fifteen seconds fails'; BuildArguments = @('./...'); Fails = $true; Contains = 'TestSlow'
             Report = @(
-                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSlow'; Elapsed = 10 },
-                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 10 }
+                @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSlow'; Elapsed = 15 },
+                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 15 }
             )
         },
         @{
@@ -25,12 +25,12 @@ function Test-GoTestReporting {
                 @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSlow/child'; Elapsed = 8 },
                 @{ Action = 'pass'; Package = 'example/a'; Test = 'TestSlow'; Elapsed = 8.1 },
                 @{ Action = 'pass'; Package = 'example/a'; Test = 'TestOther'; Elapsed = 3 },
-                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 12 }
+                @{ Action = 'pass'; Package = 'example/a'; Elapsed = 16 }
             )
         },
         @{
             Name = 'Console entry point is checked'; BuildArguments = @('-tags=console', './cmd/uploader'); Fails = $true; Contains = 'example/console'
-            Report = @(@{ Action = 'pass'; Package = 'example/console'; Elapsed = 11 })
+            Report = @(@{ Action = 'pass'; Package = 'example/console'; Elapsed = 16 })
         },
         @{
             Name = 'Ordinary test failure is preserved'; BuildArguments = @('./...'); Fails = $true; Contains = 'original failure details'; Exit = 1
