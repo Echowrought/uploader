@@ -17,6 +17,21 @@ import (
 	"cwgrpguploader/internal/storage"
 )
 
+func TestLinuxConsoleFirstRunWithoutCredentialExitsBeforeScanning(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	command := consoleCommand(t, ctx, root)
+
+	output, err := command.CombinedOutput()
+	_, logErr := os.Stat(filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log"))
+
+	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "--authenticate") || !os.IsNotExist(logErr) {
+		t.Fatalf("exit=%v timeout=%v log=%v output=%s", err, ctx.Err(), logErr, output)
+	}
+}
+
 func TestLinuxConsoleFirstRunRequiresSaveFolder(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -195,6 +210,10 @@ func consoleCommand(t *testing.T, ctx context.Context, root string, args ...stri
 
 func runningConsole(t *testing.T, root string, args ...string) *exec.Cmd {
 	t.Helper()
+	configDir := filepath.Join(root, "config", "cwg-rpg-uploader")
+	if err := storage.SaveCredential(configDir, storage.Credential{Token: strings.Repeat("A", 43), BattleTag: "Tester#1234"}); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	command := consoleCommand(t, ctx, root, args...)

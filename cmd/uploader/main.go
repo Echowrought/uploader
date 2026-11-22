@@ -85,6 +85,12 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 		return err
 	}
 	defer release()
+	account, credentialErr := leaderboard.OpenAccount(configDir)
+	if console && !dryRun {
+		if problem := account.UploadBlock(); problem != "" {
+			return fmt.Errorf("%s. Run with --authenticate, then start the uploader again", problem)
+		}
+	}
 	config, _, err := storage.LoadConfig(configDir, func() (string, error) {
 		if saveFolder != "" {
 			return saveFolder, nil
@@ -105,7 +111,6 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 		return err
 	}
 	defer httpClient.CloseIdleConnections()
-	account, credentialErr := leaderboard.OpenAccount(configDir)
 	client := leaderboard.NewClient(httpClient, account)
 	writer, err := storage.OpenLog(stateDir)
 	if err != nil {
@@ -123,9 +128,6 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 		}
 		if console {
 			fmt.Fprintln(os.Stdout, account.Status())
-			if account.UploadBlock() != "" {
-				fmt.Fprintln(os.Stdout, "Uploads are blocked. To connect a Battle.net account, stop the uploader and run it with --authenticate.")
-			}
 		}
 	}
 	lastUpload, err := storage.LoadUploadState(stateDir)
