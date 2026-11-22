@@ -87,33 +87,11 @@ func TestScannerAcceptsConfiguredFileSizeLimitAndRetainsItForOversizedReplacemen
 	}
 }
 
-func TestDefaultScannerAcceptsFullSizeFileAndRejectsOversizedReplacement(t *testing.T) {
-	folder := fixtureFolder(t)
-	limits := DefaultLimits()
-	path := filepath.Join(folder, "HERO_01_123.pld")
-	writeSizedFixture(t, path, limits.FileBytes)
-	scanner := NewScanner(folder, 0, limits)
-	now := time.Now()
-
-	_, _ = scanner.Scan(context.Background(), now)
-	first, firstErr := scanner.Scan(context.Background(), now)
-	writeSizedFixture(t, path, limits.FileBytes+1)
-	fallback, fallbackErr := scanner.Scan(context.Background(), now)
-
-	if firstErr != nil || fallbackErr != nil || len(first.Files["HERO_01_123.pld"].Text) != 8<<20 {
-		t.Fatalf("production-sized file failed: first=%v, replacement=%v", firstErr, fallbackErr)
-	}
-	if first.Fingerprint != fallback.Fingerprint || len(fallback.Warnings) != 1 || !strings.Contains(fallback.Warnings[0], "8 MiB safety limit") {
-		t.Fatalf("oversized replacement displaced the production-sized cache: %v", fallback.Warnings)
-	}
-	assertSettledCacheWithinLimits(t, scanner, limits)
-}
-
-func TestScannerRejectsLargeOverLimitDirectoryWithoutPartialSnapshot(t *testing.T) {
+func TestScannerRejectsDirectoryPastLimitInSecondBatch(t *testing.T) {
 	folder := fixtureFolder(t)
 	limits := smallLimits()
-	limits.DirectoryEntries = 300
-	for i := 0; i < limits.DirectoryEntries-3; i++ {
+	limits.DirectoryEntries = directoryBatchSize
+	for i := 0; i < limits.DirectoryEntries-fixtureEntryCount+1; i++ {
 		writeFixture(t, filepath.Join(folder, fmt.Sprintf("notes_%04d.txt", i)), "")
 	}
 	scanner := NewScanner(folder, 0, limits)

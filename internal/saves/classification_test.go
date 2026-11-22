@@ -41,36 +41,27 @@ func TestEssentialClassifiesKnownCategories(t *testing.T) {
 }
 
 func TestScannerKnownCategoryWithoutSettledVersionBlocksSnapshot(t *testing.T) {
-	for _, name := range []string{
-		"HERO_extra.pld", "ACCOUNT_extra.pld",
-		"hero_extra.PLD", "account_extra.PLD", "account_verify_extra.PLD",
-		"entitlements_extra.PLD", "settings_extra.PLD", "legacy_extra.PLD",
-		"ACCOUNT_VERIFY_123.pld",
-		"ENTITLEMENTS_player_123.pld",
-		"SETTINGS_player.pld",
-		"LEGACY_player.pld",
-	} {
-		t.Run(name, func(t *testing.T) {
-			folder := fixtureFolder(t)
-			scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
-			now := time.Now()
+	// Classification is tested for every category above. Exercise the scanner's
+	// use of that classification with one mixed-case, non-hero example.
+	const name = "account_verify_extra.PLD"
+	folder := fixtureFolder(t)
+	scanner := NewScanner(folder, 5*time.Second, DefaultLimits())
+	now := time.Now()
 
-			_, _ = scanner.Scan(context.Background(), now)
-			_, initialErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
-			writeFixture(t, filepath.Join(folder, name), "new essential data")
-			blocked, pendingErr := scanner.Scan(context.Background(), now.Add(6*time.Second))
-			snapshot, settledErr := scanner.Scan(context.Background(), now.Add(11*time.Second))
+	_, _ = scanner.Scan(context.Background(), now)
+	_, initialErr := scanner.Scan(context.Background(), now.Add(5*time.Second))
+	writeFixture(t, filepath.Join(folder, name), "new essential data")
+	blocked, pendingErr := scanner.Scan(context.Background(), now.Add(6*time.Second))
+	snapshot, settledErr := scanner.Scan(context.Background(), now.Add(11*time.Second))
 
-			if initialErr != nil || !errors.Is(pendingErr, ErrSettling) || settledErr != nil {
-				t.Fatalf("scan errors: %v, %v, %v", initialErr, pendingErr, settledErr)
-			}
-			if blocked.Files != nil || blocked.Fingerprint != "" {
-				t.Fatal("unsettled essential category was omitted from a partial snapshot")
-			}
-			if len(snapshot.Files) != 3 || snapshot.Files[name].Text != "new essential data" || len(snapshot.Warnings) != 0 {
-				t.Fatalf("settled essential category was not included: %+v", snapshot)
-			}
-		})
+	if initialErr != nil || !errors.Is(pendingErr, ErrSettling) || settledErr != nil {
+		t.Fatalf("scan errors: %v, %v, %v", initialErr, pendingErr, settledErr)
+	}
+	if blocked.Files != nil || blocked.Fingerprint != "" {
+		t.Fatal("unsettled essential category was omitted from a partial snapshot")
+	}
+	if len(snapshot.Files) != 3 || snapshot.Files[name].Text != "new essential data" || len(snapshot.Warnings) != 0 {
+		t.Fatalf("settled essential category was not included: %+v", snapshot)
 	}
 }
 
