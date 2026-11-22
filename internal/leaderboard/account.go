@@ -8,10 +8,7 @@ import (
 	"cwgrpguploader/internal/storage"
 )
 
-var (
-	ErrAuthenticationRequired = errors.New("authentication required; choose Authenticate or run --authenticate")
-	ErrAuthenticationRejected = errors.New("authentication rejected; reconnect with Authenticate or --authenticate")
-)
+var ErrAuthenticationRejected = errors.New("authentication rejected; reconnect with Authenticate or --authenticate")
 
 type Account struct {
 	dir        string
@@ -36,8 +33,7 @@ func (a *Account) MissingCredential() bool {
 func (a *Account) UploadBlock() string {
 	if _, err := a.uploadToken(); err == ErrAuthenticationRejected {
 		return "Reconnect required"
-	} else if err == ErrAuthenticationRequired {
-		return "Connect your Leaderboard account"
+
 	}
 	return ""
 }
@@ -85,7 +81,7 @@ func (a *Account) uploadToken() (string, error) {
 		return "", ErrAuthenticationRejected
 	}
 	if !a.credential.Valid() {
-		return "", ErrAuthenticationRequired
+		return "", nil // No stored credential: send an anonymous upload.
 	}
 	return a.credential.Token, nil
 }

@@ -170,27 +170,40 @@ func TestOnlyOneAuthenticationAttemptCanRunAtATime(t *testing.T) {
 	}
 }
 
-func TestUploadDoesNotFallBackWhenCredentialIsRejectedOrMissing(t *testing.T) {
+func TestUploadWithoutCredentialSendsAnonymousRequest(t *testing.T) {
+	var calls []observedRequest
+	client := authClient(func(req *http.Request) *http.Response {
+		calls = append(calls, observe(req, time.Now()))
+		return authReply(200, `{"player":"Tester#1234","user_hash":42,"heroes":1}`)
+	})
+	client.account, _ = OpenAccount(t.TempDir())
+
+	result, err := client.Upload(t.Context(), UploadRequest{})
+
+	if err != nil || result.Heroes != 1 {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if len(calls) != 1 || calls[0].url != BaseURL+"/api/uploader/upload" || calls[0].authorization != "" {
+		t.Fatal("anonymous upload used the wrong destination or included authorization")
+	}
+}
+
+func TestUploadDoesNotFallBackWhenCredentialIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	var calls []observedRequest
 	client := authClient(func(req *http.Request) *http.Response {
 		calls = append(calls, observe(req, time.Now()))
 		return authReply(401, `{"error":"leave the Authorization header out"}`)
 	})
-	missing, _ := OpenAccount(dir)
 	existing := saveTestCredential(t, dir)
 	account, _ := OpenAccount(dir)
 	client.account = account
 
-	_, missingErr := NewClient(client.HTTP, missing).Upload(t.Context(), UploadRequest{})
 	_, firstErr := client.Upload(t.Context(), UploadRequest{})
 	_, secondErr := client.Upload(t.Context(), UploadRequest{})
 
-	if !errors.Is(missingErr, ErrAuthenticationRequired) || !errors.Is(firstErr, ErrAuthenticationRejected) || !errors.Is(secondErr, ErrAuthenticationRejected) || account.Status() != "Reconnect required" {
-		t.Fatalf("missing=%v, first=%v, second=%v, status=%q", missingErr, firstErr, secondErr, account.Status())
-	}
-	if !missing.MissingCredential() || account.MissingCredential() {
-		t.Fatal("the rejected credential should not trigger the missing-credential prompt")
+	if !errors.Is(firstErr, ErrAuthenticationRejected) || !errors.Is(secondErr, ErrAuthenticationRejected) || account.Status() != "Reconnect required" {
+		t.Fatalf("first=%v, second=%v, status=%q", firstErr, secondErr, account.Status())
 	}
 	if len(calls) != 1 || calls[0].url != BaseURL+"/api/uploader/upload" || calls[0].authorization != "Bearer "+existing.Token {
 		t.Fatal("unexpected authenticated request or anonymous fallback")

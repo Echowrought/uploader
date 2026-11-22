@@ -62,18 +62,19 @@ func (e *UploadError) Error() string { return e.Message }
 func (e *UploadError) Unwrap() error { return e.Cause }
 
 func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
-	if c.account == nil {
-		return Result{}, ErrAuthenticationRequired
-	}
-	token, err := c.account.uploadToken()
-	if err != nil {
-		return Result{}, err
+	var token string
+	if c.account != nil {
+		var err error
+		token, err = c.account.uploadToken()
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	if !trustedURL(c.URL, BaseURL, false) {
 		return Result{}, errors.New("invalid Leaderboard destination")
 	}
 	result, err := c.upload(ctx, request, token)
-	if errors.Is(err, ErrAuthenticationRejected) {
+	if token != "" && errors.Is(err, ErrAuthenticationRejected) {
 		c.account.reject(token)
 	}
 	return result, err
@@ -90,22 +91,27 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "CWGRPGUploader/"+buildinfo.Version)
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	response, err := c.doPrivate(req)
 	if err != nil {
 		retry := true
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err, retry = ctxErr, false
 		}
-		return Result{}, &UploadError{Message: "upload connection failed: " + strings.ReplaceAll(err.Error(), token, "[redacted]"), Cause: err, Retry: retry}
+		return Result{}, &UploadError{Message: "upload connection failed: " + redactUploadError(err, token), Cause: err, Retry: retry}
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusUnauthorized {
+	if token != "" && response.StatusCode == http.StatusUnauthorized {
 		return Result{}, ErrAuthenticationRejected
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseSizeLimit+1))
 	// Do not expose echoed credentials in diagnostics, including at the truncation boundary.
-	diagnostic := bytes.ReplaceAll(data, []byte(token), []byte("[redacted]"))
+	diagnostic := data
+	if token != "" {
+		diagnostic = bytes.ReplaceAll(data, []byte(token), []byte("[redacted]"))
+	}
 	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
 		return Result{}, &UploadError{Message: "read upload response: " + ctxErr.Error(), Cause: ctxErr}
 	}
@@ -124,7 +130,7 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 		}
 	}
 	if err != nil {
-		return Result{}, &UploadError{Message: "read upload response: " + strings.ReplaceAll(err.Error(), token, "[redacted]"), Cause: err, Retry: true}
+		return Result{}, &UploadError{Message: "read upload response: " + redactUploadError(err, token), Cause: err, Retry: true}
 	}
 	if len(data) > responseSizeLimit {
 		return Result{}, &UploadError{Message: withResponseExcerpt("server response exceeds safety limit", diagnostic)}
@@ -134,6 +140,13 @@ func (c *Client) upload(ctx context.Context, request UploadRequest, token string
 		return Result{}, &UploadError{Message: withResponseExcerpt("unrecognized upload response; success not recorded", diagnostic), Cause: err}
 	}
 	return result, nil
+}
+
+func redactUploadError(err error, token string) string {
+	if token == "" {
+		return err.Error()
+	}
+	return strings.ReplaceAll(err.Error(), token, "[redacted]")
 }
 
 func withResponseExcerpt(message string, data []byte) string {
