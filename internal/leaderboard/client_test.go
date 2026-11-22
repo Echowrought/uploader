@@ -35,7 +35,7 @@ func TestClientUploadsRequest(t *testing.T) {
 	if err != nil || decodeErr != nil {
 		t.Fatalf("errors: %v, %v", err, decodeErr)
 	}
-	if method != "POST" || path != "/api/upload" || contentType != "application/json" {
+	if method != "POST" || path != "/api/uploader/upload" || contentType != "application/json" {
 		t.Fatal("incorrect upload request")
 	}
 	if userAgent != wantUserAgent {
@@ -410,6 +410,10 @@ func TestClientParsesRetryAfterHTTPDate(t *testing.T) {
 			})
 		})
 	}
+}
+
+func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
+	return c.upload(ctx, request, strings.Repeat("xY", 21)+"Z")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -48,7 +48,7 @@ different folder and cause its snapshot to be uploaded separately.
 **To prevent automatic uploads before the first normal launch:** create the
 application-data folder and `config.json` yourself, use the example with your
 actual save path, and set `upload_automatically` to `false`. Do not launch the app
-first to obtain the example: default automatic uploads include existing saves.
+first to obtain the example: once an account is connected, default automatic uploads include existing saves.
 **Upload now** can still request an upload with automatic detection disabled.
 
 In either console, begin with `--dry-run --save-folder PATH` if you want the app to create
@@ -68,7 +68,7 @@ means the notice is pending. Dry runs leave it pending. Normally, leave this
 field under the app's control.
 
 `state.json` stores the last successful snapshot's folder, destination,
-fingerprint, upload time, player, and positive hero count. It is not a queue of
+fingerprint, upload time, player, and hero count (which can be zero if the server kept all newer saves). It is not a queue of
 save contents. **Deleting it may cause existing saves to be uploaded again.**
 
 Loading and saving both validate settings/history. Configuration must be a JSON

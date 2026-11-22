@@ -50,7 +50,7 @@ func (state UploadState) Validate() error {
 	if state.UploadedAt.IsZero() {
 		return errors.New("upload state requires an upload timestamp")
 	}
-	if state.Player == "" || state.Heroes < 1 {
+	if state.Player == "" || state.Heroes < 0 {
 		return errors.New("upload state requires a player and at least one hero")
 	}
 	return nil

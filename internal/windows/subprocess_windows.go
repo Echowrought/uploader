@@ -1,6 +1,7 @@
 package windows
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,13 @@ func (job *subprocessJob) Close() error {
 }
 
 func (job *subprocessJob) output(args []string, timeout time.Duration) ([]byte, error) {
+	return job.outputContext(context.Background(), args, timeout)
+}
+
+func (job *subprocessJob) outputContext(ctx context.Context, args []string, timeout time.Duration) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	stdout, childStdout, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -62,6 +70,16 @@ func (job *subprocessJob) output(args []string, timeout time.Duration) ([]byte, 
 		return nil, err
 	}
 	defer win.CloseHandle(process)
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		win.TerminateProcess(process, 1)
+		close(cancelled)
+	})
+	defer func() {
+		if !stop() {
+			<-cancelled
+		}
+	}()
 	childStdout.Close()
 
 	// Drain stdout concurrently with waiting so output cannot fill the pipe
@@ -73,6 +91,9 @@ func (job *subprocessJob) output(args []string, timeout time.Duration) ([]byte, 
 		win.TerminateProcess(process, 1)
 	}
 	waitErr := <-finished
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return output, errors.Join(readErr, waitErr)
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -54,27 +55,33 @@ func (e *UploadError) Error() string { return e.Message }
 
 func (e *UploadError) Unwrap() error { return e.Cause }
 
-func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
+func (c *Client) upload(ctx context.Context, request UploadRequest, token string) (Result, error) {
 	body, err := json.Marshal(request)
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/api/upload", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/api/uploader/upload", bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "CWGRPGUploader/"+buildinfo.Version)
-	response, err := c.HTTP.Do(req)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response, err := c.doPrivate(req)
 	if err != nil {
 		retry := true
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err, retry = ctxErr, false
 		}
-		return Result{}, &UploadError{Message: "upload connection failed: " + err.Error(), Cause: err, Retry: retry}
+		return Result{}, &UploadError{Message: "upload connection failed: " + strings.ReplaceAll(err.Error(), token, "[redacted]"), Cause: err, Retry: retry}
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized {
+		return Result{}, ErrAuthenticationRejected
+	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseSizeLimit+1))
+	// Do not expose echoed credentials in diagnostics, including at the truncation boundary.
+	diagnostic := bytes.ReplaceAll(data, []byte(token), []byte("[redacted]"))
 	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
 		return Result{}, &UploadError{Message: "read upload response: " + ctxErr.Error(), Cause: ctxErr}
 	}
@@ -82,25 +89,25 @@ func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, err
 		// Status and retry headers take precedence over an incomplete error body.
 		var errorBody string
 		if err == nil && len(data) < errorBodyLogLimit {
-			errorBody = string(data)
+			errorBody = string(diagnostic)
 		}
 		return Result{}, &UploadError{
 			Body:    errorBody,
 			Cause:   err,
-			Message: withResponseExcerpt(fmt.Sprintf("upload rejected: HTTP %d", response.StatusCode), data),
+			Message: withResponseExcerpt(fmt.Sprintf("upload rejected: HTTP %d", response.StatusCode), diagnostic),
 			Retry:   response.StatusCode == 408 || response.StatusCode == 429 || response.StatusCode >= 500,
 			After:   retryAfter(response.Header.Get("Retry-After"), time.Now()),
 		}
 	}
 	if err != nil {
-		return Result{}, &UploadError{Message: "read upload response: " + err.Error(), Cause: err, Retry: true}
+		return Result{}, &UploadError{Message: "read upload response: " + strings.ReplaceAll(err.Error(), token, "[redacted]"), Cause: err, Retry: true}
 	}
 	if len(data) > responseSizeLimit {
-		return Result{}, &UploadError{Message: withResponseExcerpt("server response exceeds safety limit", data)}
+		return Result{}, &UploadError{Message: withResponseExcerpt("server response exceeds safety limit", diagnostic)}
 	}
 	var result Result
-	if err := json.Unmarshal(data, &result); err != nil || result.Player == "" || result.Heroes < 1 || len(result.UserHash) == 0 || string(result.UserHash) == "null" {
-		return Result{}, &UploadError{Message: withResponseExcerpt("unrecognized upload response; success not recorded", data), Cause: err}
+	if err := json.Unmarshal(diagnostic, &result); err != nil || result.Player == "" || result.Heroes < 0 || (result.Heroes == 0 && len(result.KeptNewer) == 0) || len(result.UserHash) == 0 || string(result.UserHash) == "null" {
+		return Result{}, &UploadError{Message: withResponseExcerpt("unrecognized upload response; success not recorded", diagnostic), Cause: err}
 	}
 	return result, nil
 }

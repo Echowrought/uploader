@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"cwgrpguploader/internal/app"
+	"cwgrpguploader/internal/leaderboard"
 	platform "cwgrpguploader/internal/linux"
 )
 
@@ -17,6 +18,6 @@ func showMessage(title, message string) error {
 	return err
 }
 
-func runTray(context.Context, context.CancelFunc, *app.App, string) error {
+func runTray(context.Context, context.CancelFunc, *app.App, string, *leaderboard.Account) error {
 	return errors.New("Linux supports console mode only")
 }

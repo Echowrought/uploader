@@ -297,7 +297,6 @@ func TestLoadUploadStateRejectsInvalidHistory(t *testing.T) {
 		{"missing fingerprint", func(state *UploadState) { state.Fingerprint = "" }},
 		{"missing timestamp", func(state *UploadState) { state.UploadedAt = time.Time{} }},
 		{"missing player", func(state *UploadState) { state.Player = "" }},
-		{"zero heroes", func(state *UploadState) { state.Heroes = 0 }},
 		{"negative heroes", func(state *UploadState) { state.Heroes = -1 }},
 	}
 	for _, tc := range cases {
@@ -333,7 +332,6 @@ func TestSaveUploadStateRejectsInvalidHistoryWithoutReplacingPreviousState(t *te
 		{"missing fingerprint", func(state *UploadState) { state.Fingerprint = "" }},
 		{"missing timestamp", func(state *UploadState) { state.UploadedAt = time.Time{} }},
 		{"missing player", func(state *UploadState) { state.Player = "" }},
-		{"zero heroes", func(state *UploadState) { state.Heroes = 0 }},
 		{"negative heroes", func(state *UploadState) { state.Heroes = -1 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
