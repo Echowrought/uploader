@@ -3,10 +3,32 @@ package windows
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"cwgrpguploader/internal/leaderboard"
 )
+
+func TestNativeApprovalDialogUsesPackedWindowsABI(t *testing.T) {
+	const pointerSize = unsafe.Sizeof(uintptr(0))
+	if got := unsafe.Sizeof(taskDialogConfig{}); got != 32+16*pointerSize {
+		t.Fatalf("TASKDIALOGCONFIG size = %d", got)
+	}
+	if got := unsafe.Sizeof(taskDialogButton{}); got != 4+pointerSize {
+		t.Fatalf("TASKDIALOG_BUTTON size = %d", got)
+	}
+	if runtime.GOARCH == "amd64" {
+		// Loading the native entry point without showing a GUI also verifies
+		// that the test executable received the Common Controls v6 manifest.
+		if err := taskDialogIndirect.Find(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := approvalKernel32.NewProc("RtlMoveMemory").Find(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestApprovalWindowClosesWhenAuthenticationFinishes(t *testing.T) {
 	shown := make(chan struct{})

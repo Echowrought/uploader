@@ -12,11 +12,12 @@ The Windows assets are generated and committed:
 - `../internal/windows/icon.ico`: transparent PNG-compressed images at 16, 20,
   24, 32, 40, 48, 64, 128, and 256 pixels. Embedded for the tray and used by
   Inno Setup for its setup executable.
-- `../internal/windows/icon_windows_amd64.syso`: Windows icon resources linked
-  through the Windows UI package into tray, console, and profiling executables.
-  The installer's shortcuts/uninstall entry use the tray executable's icon.
+- `../internal/windows/icon_windows_amd64.syso`: Windows icon and manifest resources
+  linked into the tray, console, and profiling executables. The installer uses the
+  tray executable’s icon for its shortcuts. `windows.manifest` enables Windows
+  Common Controls v6 for the native authentication dialog.
 
-After editing the SVG, regenerate from the repository root:
+After editing the SVG or manifest, regenerate from the repository root:
 
 ```powershell
 .\scripts\build-icon.ps1
