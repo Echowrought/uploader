@@ -79,7 +79,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Account connection
 
-Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it asks whether to authenticate. Login starts only if you agree. The console shows how to use `--authenticate`; dry runs do not ask. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it asks whether to authenticate. Login starts only if you agree. Declining the prompt or failing to complete startup authentication exits the tray app. The console shows how to use `--authenticate`; dry runs do not ask. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
 
 ## Configuration and logs
 
