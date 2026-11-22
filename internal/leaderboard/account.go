@@ -22,7 +22,14 @@ type Account struct {
 
 func OpenAccount(dir string) (*Account, error) {
 	credential, err := storage.LoadCredential(dir)
-	return &Account{dir: dir, credential: credential}, err
+	return &Account{dir: dir, credential: credential, rejected: err != nil}, err
+}
+
+// MissingCredential distinguishes a new connection from a credential that failed.
+func (a *Account) MissingCredential() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return !a.rejected && !a.credential.Valid()
 }
 
 // Status never returns secrets and does not make network requests.
