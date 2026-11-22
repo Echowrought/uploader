@@ -19,7 +19,7 @@ func promptAuthentication() bool {
 	const yesNoQuestion = 0x04 | 0x20
 	const yes = 6
 	box := windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW")
-	result, _, _ := box.Call(0, uintptr(unsafe.Pointer(title)), uintptr(unsafe.Pointer(message)), yesNoQuestion)
+	result, _, _ := box.Call(0, uintptr(unsafe.Pointer(message)), uintptr(unsafe.Pointer(title)), yesNoQuestion)
 	return result == yes
 }
 
