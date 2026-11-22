@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	autostart := flag.Bool("autostart", false, "launch the Windows tray without an authentication prompt")
+	autostart := flag.Bool("autostart", false, "launch the Windows tray at sign-in")
 	authenticate := flag.Bool("authenticate", false, "connect to the Leaderboard without scanning or uploading saves (console)")
 	dryRun := flag.Bool("dry-run", false, "inspect one stable snapshot without uploading; use the console binary for terminal output")
 	var saveFolder string

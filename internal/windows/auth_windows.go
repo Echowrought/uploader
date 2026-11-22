@@ -6,22 +6,9 @@ import (
 	"errors"
 	"os/exec"
 	"time"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 
 	"cwgrpguploader/internal/leaderboard"
 )
-
-func promptAuthentication() bool {
-	title, _ := windows.UTF16PtrFromString("CWG RPG Uploader")
-	message, _ := windows.UTF16PtrFromString("Connect your Leaderboard account to enable uploads. Authenticate now?")
-	const yesNoQuestion = 0x04 | 0x20
-	const yes = 6
-	box := windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW")
-	result, _, _ := box.Call(0, uintptr(unsafe.Pointer(title)), uintptr(unsafe.Pointer(message)), yesNoQuestion)
-	return result == yes
-}
 
 // Only the public browser link goes to the dialog subprocess, never either token.
 func presentApproval(ctx context.Context, job *subprocessJob, link string) error {
