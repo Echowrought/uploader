@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,8 +22,13 @@ const errorBodyLogLimit = 4 << 10
 const errorBodyExcerptLimit = 512
 
 type Client struct {
-	HTTP *http.Client
-	URL  string
+	HTTP    *http.Client
+	URL     string
+	account *Account
+}
+
+func NewClient(httpClient *http.Client, account *Account) *Client {
+	return &Client{HTTP: httpClient, URL: BaseURL, account: account}
 }
 
 type UploadFile struct {
@@ -54,6 +60,24 @@ type UploadError struct {
 func (e *UploadError) Error() string { return e.Message }
 
 func (e *UploadError) Unwrap() error { return e.Cause }
+
+func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, error) {
+	if c.account == nil {
+		return Result{}, ErrAuthenticationRequired
+	}
+	token, err := c.account.uploadToken()
+	if err != nil {
+		return Result{}, err
+	}
+	if !trustedURL(c.URL, BaseURL, false) {
+		return Result{}, errors.New("invalid Leaderboard destination")
+	}
+	result, err := c.upload(ctx, request, token)
+	if errors.Is(err, ErrAuthenticationRejected) {
+		c.account.reject(token)
+	}
+	return result, err
+}
 
 func (c *Client) upload(ctx context.Context, request UploadRequest, token string) (Result, error) {
 	body, err := json.Marshal(request)
