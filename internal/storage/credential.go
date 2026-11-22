@@ -30,9 +30,6 @@ func (c Credential) Valid() bool {
 func LoadCredential(dir string) (Credential, error) {
 	path := filepath.Join(dir, credentialFile)
 	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return Credential{}, nil
-	}
 	if err != nil {
 		return Credential{}, err
 	}
