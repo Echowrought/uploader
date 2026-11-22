@@ -69,13 +69,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					})
 				}()
 			}
-			var startupApproval <-chan bool
-			if !autostart && account.MissingCredential() {
-				authenticate.Disable()
-				decision := make(chan bool, 1)
-				startupApproval = decision
-				go func() { decision <- promptAuthentication() }()
-			}
 			send := func(command app.Command) {
 				result := make(chan error, 1)
 				command.Result = result
@@ -110,9 +103,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					badged = blocked
 					if blocked {
 						systray.SetIcon(errorTrayIcon())
-						if autostart || !account.MissingCredential() {
-							notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
-						}
+						notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
 					} else {
 						systray.SetIcon(trayIcon)
 					}
@@ -162,16 +153,8 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
-				case approved := <-startupApproval:
-					startupApproval = nil
-					authenticate.Enable()
-					if approved && account.MissingCredential() {
-						startAuth()
-					}
 				case <-authenticate.ClickedCh:
-					if startupApproval == nil {
-						startAuth()
-					}
+					startAuth()
 				case <-cancelAuth.ClickedCh:
 					if stopAuth != nil {
 						stopAuth()
