@@ -39,9 +39,10 @@ Extract the Linux archive and first inspect your saves without uploading:
 ./cwg-rpg-uploader-console --dry-run --save-folder "/absolute/path/to/Warcraft III/CustomMapData/CWG2"
 ```
 
-Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, run without `--dry-run`:
+Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, connect your account, then start the uploader:
 
 ```sh
+./cwg-rpg-uploader-console --authenticate
 ./cwg-rpg-uploader-console
 ```
 
@@ -56,6 +57,8 @@ Ctrl+C or SIGTERM stops the app and its retries. There is no Linux tray, folder 
 | **Last success** | Shows confirmed delivery as `Today, HH:mm` or a date/time, without seconds; click for full last-upload details and any history-save error |
 | **Automatic uploads** | Enables/disables detection of new changes; accepted uploads and retries continue |
 | **Upload now** | Requests a snapshot even when automatic detection is off; still respects settling and retry delays |
+| **Authenticate…** | Shows a copyable browser link. Sign in with Battle.net and explicitly approve upload access; the tray then shows `Connected as <BattleTag>` |
+| **Disconnect** | Removes the credential from this device. It does not revoke a copied credential on the server |
 | **Settings → Choose save folder...** | Changes the watched folder; already accepted work from the previous folder can still finish |
 | **Settings → Launch at Windows sign-in** | Changes the current-user Windows startup registration; no administrator rights needed |
 | **Open leaderboard** | Opens the public leaderboard |
@@ -74,11 +77,16 @@ Safety limits are 8 MiB per file version, 32 MiB per snapshot, 1,024 selected fi
 
 Transient failures retry automatically. Rejected submissions wait for changed saves or **Upload now**.
 
+## Account connection
+
+Uploads require a connected Leaderboard account. The uploader never opens a login page on startup and never falls back to anonymous uploads. If access is rejected, choose **Authenticate…** again or stop the console app and rerun it with `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+
 ## Configuration and logs
 
 Windows data lives in `%LOCALAPPDATA%\CWGRPGUploader\`, even for portable copies. Linux settings use `${XDG_CONFIG_HOME:-$HOME/.config}/cwg-rpg-uploader/`; history and logs use `${XDG_STATE_HOME:-$HOME/.local/state}/cwg-rpg-uploader/`.
 
 - `config.json`: settings. Restart after manual edits; tray changes apply immediately.
+- `uploader-token.json`: private upload credential stored alongside `config.json`. **Do not share, copy, or include it in diagnostics.** Anyone who obtains it can upload as that account. To disconnect in console mode, stop the app and delete this file.
 - `state.json`: successful-upload history. **Deleting it can cause existing saves to be submitted again.**
 - `uploader.log`: rotating diagnostic logs. Server error responses can contain sensitive data; review logs before sharing.
 

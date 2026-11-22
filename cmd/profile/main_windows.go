@@ -105,10 +105,9 @@ func newApplication(folder string) (*app.App, error) {
 	}
 	// Retain the normal idle transport and linked TLS implementation for memory
 	// comparisons, but never delegate a request to it, even if DryRun regresses.
-	client.Transport = blockedTransport{client.Transport}
 	return &app.App{
 		Config: config, DryRun: true,
-		Client: &leaderboard.Client{URL: leaderboard.BaseURL, HTTP: client},
+		Client: blockedUploader{client},
 		Logger: log.New(io.Discard, "", 0), Updates: make(chan app.Status, 1),
 		// No Commands channel: the diagnostic tray cannot mutate configuration.
 	}, nil
@@ -116,8 +115,8 @@ func newApplication(folder string) (*app.App, error) {
 
 var errNetworkingDisabled = errors.New("networking is disabled in the profiling executable")
 
-type blockedTransport struct{ transport http.RoundTripper }
+type blockedUploader struct{ idleClient *http.Client }
 
-func (blockedTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	return nil, errNetworkingDisabled
+func (blockedUploader) Upload(context.Context, leaderboard.UploadRequest) (leaderboard.Result, error) {
+	return leaderboard.Result{}, errNetworkingDisabled
 }

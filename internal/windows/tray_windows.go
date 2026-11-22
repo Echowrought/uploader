@@ -2,6 +2,7 @@ package windows
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string) error {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account) error {
 	job, err := newSubprocessJob()
 	if err != nil {
 		return err
@@ -30,6 +31,13 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		automaticUploads := systray.AddMenuItemCheckbox("Automatic uploads", "Send new saves automatically; queued uploads and retries continue when off", config.Automatic)
 		upload := systray.AddMenuItem("Upload now", "Upload current saves even with Automatic uploads off")
 		systray.AddSeparator()
+		accountItem := systray.AddMenuItem(display(account.Status(), 90), "Leaderboard account")
+		accountItem.Disable()
+		authenticate := systray.AddMenuItem("Authenticate...", "Connect or reconnect to the Leaderboard")
+		cancelAuth := systray.AddMenuItem("Cancel authentication", "Stop the pending authentication")
+		cancelAuth.Hide()
+		disconnect := systray.AddMenuItem("Disconnect", "Remove the local upload credential")
+		systray.AddSeparator()
 		board := systray.AddMenuItem("Open leaderboard", "")
 		settings := systray.AddMenuItem("Settings", "")
 		folder := settings.AddSubMenuItem("Choose save folder...", "")
@@ -42,6 +50,8 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			latest := app.Status{Message: "Starting", Config: config}
 			picked := make(chan folderResult, 1)
 			picking := false
+			authDone := make(chan error, 1)
+			var stopAuth context.CancelFunc
 			send := func(command app.Command) {
 				result := make(chan error, 1)
 				command.Result = result
@@ -76,6 +86,9 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					return
 				case update := <-updates:
 					latest = update
+					if stopAuth == nil {
+						accountItem.SetTitle(display(account.Status(), 90))
+					}
 					menu := update.Menu(time.Now())
 					detectionItem.SetTitle(display(menu.Detection.Title, 90))
 					uploadItem.SetTitle(display(menu.Upload.Title, 90))
@@ -96,6 +109,42 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
+				case <-authenticate.ClickedCh:
+					if stopAuth != nil {
+						continue
+					}
+					authCtx, cancelAttempt := context.WithCancel(ctx)
+					stopAuth = cancelAttempt
+					authenticate.Disable()
+					disconnect.Disable()
+					cancelAuth.Show()
+					accountItem.SetTitle("Authentication pending")
+					go func() {
+						authDone <- account.Authenticate(authCtx, func(ctx context.Context, link string) error {
+							return presentApproval(ctx, job, link)
+						})
+					}()
+				case <-cancelAuth.ClickedCh:
+					if stopAuth != nil {
+						stopAuth()
+					}
+				case err := <-authDone:
+					stopAuth()
+					stopAuth = nil
+					cancelAuth.Hide()
+					authenticate.Enable()
+					disconnect.Enable()
+					accountItem.SetTitle(display(account.Status(), 90))
+					if err == nil && latest.Config.Automatic {
+						send(app.Command{Kind: "upload"})
+					} else if !errors.Is(err, context.Canceled) && !errors.Is(err, leaderboard.ErrAuthCancelled) {
+						showError(err)
+					}
+				case <-disconnect.ClickedCh:
+					if stopAuth == nil {
+						showError(account.Disconnect())
+						accountItem.SetTitle(display(account.Status(), 90))
+					}
 				case <-startup.ClickedCh:
 					// Query again so external registration changes are respected.
 					enabled, err := StartupEnabled()

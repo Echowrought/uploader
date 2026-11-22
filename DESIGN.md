@@ -31,14 +31,17 @@ Implementation verification uses temporary fixtures and local HTTP servers. Real
 - Reimplementing the game's save parser or leaderboard calculations.
 - Providing a local hero viewer or leaderboard replacement.
 
-## Existing Website Integration
+## Leaderboard API Integration
 
-The website's publicly served frontend currently submits saves directly to:
+The uploader sends authenticated uploads to the fixed Leaderboard origin:
 
 ```text
-POST https://cwg2-leaderboard.rskiland.workers.dev/api/upload
+POST https://cwg.echowrought.com/leaderboard/api/uploader/upload
 Content-Type: application/json
+Authorization: Bearer <upload-token>
 ```
+
+An explicit tray or console action starts device authorization with `/api/uploader/begin-auth`. The uploader displays only the approval link and sends the private polling code only to `/api/uploader/poll-auth`. The browser session and explicit account approval are managed by the Leaderboard. The uploader stores the returned upload-only token in a private per-user file, does not follow API redirects, and never falls back to anonymous uploads.
 
 Example request structure:
 
@@ -59,15 +62,7 @@ Example request structure:
 
 The keys are file basenames. `mtime` is the file modification time in Unix milliseconds.
 
-The observed web frontend behaves as follows (the uploader deliberately uses the broader eligibility and priority policy described under Snapshot Rules):
-
-- Reads `.pld` files and excludes `ACCOUNT_VERIFY_*`.
-- Submits files with the prefixes `HERO_`, `ACCOUNT_`, `ENTITLEMENTS_`, `LEGACY_`, and `SETTINGS_`.
-- Requires at least one hero file and an `ACCOUNT_*.pld` file before submitting.
-- Makes the upload request without an explicit login or authorization header.
-- Uses response fields including `user_hash`, `player`, `heroes`, `replaced`, and `kept_newer` to report the result.
-
-These observations come from the current frontend, not a documented stable API contract. Server-side limits, validation rules, and compatibility must be verified during implementation. No test uploads have been made.
+The server validates the saves against the token-bound account. The client reads `user_hash`, `player`, `heroes`, `replaced`, and `kept_newer`; an accepted submission can report zero heroes when the server kept all newer saves.
 
 ## User Experience
 

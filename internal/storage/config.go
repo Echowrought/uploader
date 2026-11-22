@@ -18,18 +18,9 @@ type Config struct {
 }
 
 func LoadConfig(dir string, defaultFolder func() (string, error)) (Config, bool, error) {
-	config := Config{PollSeconds: 5, Automatic: true}
-	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
-	firstRun := errors.Is(err, os.ErrNotExist)
-	if err != nil && !firstRun {
+	config, firstRun, hasFolder, err := readConfig(dir)
+	if err != nil {
 		return config, false, err
-	}
-	hasFolder := false
-	if !firstRun {
-		hasFolder, err = decodeConfig(data, &config)
-		if err != nil {
-			return config, false, fmt.Errorf("invalid config.json: %w", err)
-		}
 	}
 	if !hasFolder {
 		config.SaveFolder, err = defaultFolder()
@@ -41,6 +32,28 @@ func LoadConfig(dir string, defaultFolder func() (string, error)) (Config, bool,
 		return config, true, SaveConfig(dir, config)
 	}
 	return config, false, config.Validate()
+}
+
+// LoadProxyURL is used by explicit authentication, which does not need a save folder.
+func LoadProxyURL(dir string) (string, error) {
+	config, _, _, err := readConfig(dir)
+	return config.ProxyURL, err
+}
+
+func readConfig(dir string) (Config, bool, bool, error) {
+	config := Config{PollSeconds: 5, Automatic: true}
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return config, true, false, nil
+	}
+	if err != nil {
+		return config, false, false, err
+	}
+	hasFolder, err := decodeConfig(data, &config)
+	if err != nil {
+		return config, false, false, fmt.Errorf("invalid config.json: %w", err)
+	}
+	return config, false, hasFolder, nil
 }
 
 func SaveConfig(dir string, config Config) error {
@@ -90,6 +103,10 @@ func decodeConfig(data []byte, config *Config) (bool, error) {
 }
 
 func atomicJSON(path string, value any) error {
+	return writeJSON(path, value, nil)
+}
+
+func writeJSON(path string, value any, protect func(*os.File) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -102,6 +119,12 @@ func atomicJSON(path string, value any) error {
 		return err
 	}
 	defer os.Remove(file.Name())
+	if protect != nil {
+		if err := protect(file); err != nil {
+			file.Close()
+			return err
+		}
+	}
 	if _, err = file.Write(append(data, '\n')); err != nil {
 		file.Close()
 		return err

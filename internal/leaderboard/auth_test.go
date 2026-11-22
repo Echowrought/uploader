@@ -1,0 +1,263 @@
+package leaderboard
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"cwgrpguploader/internal/storage"
+)
+
+const (
+	approvalLink = BaseURL + "/api/uploader/approve?request=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	pollLink     = BaseURL + "/api/uploader/poll-auth"
+	pollSecret   = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	issuedToken  = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+)
+
+func TestAuthenticatePollsAtServerIntervalsAndPersistsCredential(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		var calls []observedRequest
+		client := authClient(func(req *http.Request) *http.Response {
+			calls = append(calls, observe(req, start))
+			switch len(calls) {
+			case 1:
+				return authReply(201, beginResponse(approvalLink, pollLink))
+			case 2:
+				return authReply(400, `{"error":"authorization_pending"}`)
+			case 3:
+				res := authReply(429, `{"error":"slow_down"}`)
+				res.Header.Set("Retry-After", "3")
+				return res
+			default:
+				return authReply(200, `{"token":"`+issuedToken+`","battletag":"Tester#1234","user_hash":42}`)
+			}
+		})
+		account, err := openAccount(client, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var displayed string
+
+		err = account.Authenticate(t.Context(), func(_ context.Context, link string) error { displayed = link; return nil })
+		restored, restoreErr := openAccount(client, dir)
+
+		if err != nil || restoreErr != nil || displayed != approvalLink || restored.Status() != "Connected as Tester#1234" {
+			t.Fatalf("authenticate=%v, restore=%v, status=%q", err, restoreErr, restored.Status())
+		}
+		want := []observedRequest{
+			{url: BaseURL + "/api/uploader/begin-auth", method: "POST"},
+			{url: pollLink, method: "POST", authorization: "Bearer " + pollSecret, after: time.Second},
+			{url: pollLink, method: "POST", authorization: "Bearer " + pollSecret, after: 2 * time.Second},
+			{url: pollLink, method: "POST", authorization: "Bearer " + pollSecret, after: 5 * time.Second},
+		}
+		if len(calls) != len(want) {
+			t.Fatalf("got %d requests, want %d", len(calls), len(want))
+		}
+		for i := range want {
+			if calls[i] != want[i] {
+				t.Fatalf("request %d had wrong destination, authorization, method, or timing", i)
+			}
+		}
+	})
+}
+
+func TestAuthenticateRejectsUntrustedLinksBeforePresentingOrPolling(t *testing.T) {
+	for _, tc := range []struct{ name, approval, poll string }{
+		{"foreign poll", approvalLink, "https://other.example/api/uploader/poll-auth"},
+		{"foreign approval", strings.Replace(approvalLink, BaseURL, "https://other.example", 1), pollLink},
+		{"secret in approval", strings.Replace(approvalLink, strings.Repeat("A", 43), pollSecret, 1), pollLink},
+		{"query on poll", approvalLink, pollLink + "?other=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests int
+			client := authClient(func(*http.Request) *http.Response {
+				requests++
+				return authReply(201, beginResponse(tc.approval, tc.poll))
+			})
+			account, _ := openAccount(client, t.TempDir())
+			presented := false
+
+			err := account.Authenticate(t.Context(), func(context.Context, string) error { presented = true; return nil })
+
+			if err == nil || presented || requests != 1 {
+				t.Fatalf("error=%v, presented=%t, requests=%d", err, presented, requests)
+			}
+		})
+	}
+}
+
+func TestFailedReconnectPreservesCredentialAndDoesNotExposeServerBody(t *testing.T) {
+	dir := t.TempDir()
+	existing := saveTestCredential(t, dir)
+	synctest.Test(t, func(t *testing.T) {
+		client := authClient(func(req *http.Request) *http.Response {
+			if req.URL.String() != pollLink {
+				return authReply(201, beginResponse(approvalLink, pollLink))
+			}
+			return authReply(400, `{"error":"access_denied","detail":"`+pollSecret+` `+existing.Token+`"}`)
+		})
+		account, _ := openAccount(client, dir)
+
+		err := account.Authenticate(t.Context(), func(context.Context, string) error { return nil })
+		saved, loadErr := storage.LoadCredential(dir)
+
+		if err == nil || err.Error() != "authentication was denied in the browser" || loadErr != nil || saved != existing || account.Status() != "Connected as Tester#1234" {
+			t.Fatal("denial did not return a safe error and preserve the account")
+		}
+	})
+}
+
+func TestPollCancellationStopsWithoutSendingAnotherRequest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		requests := 0
+		client := authClient(func(*http.Request) *http.Response {
+			requests++
+			return authReply(201, beginResponse(approvalLink, pollLink))
+		})
+		account, _ := openAccount(client, t.TempDir())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		err := account.Authenticate(ctx, func(context.Context, string) error { cancel(); return nil })
+
+		if !errors.Is(err, ErrAuthCancelled) || requests != 1 {
+			t.Fatalf("error=%v, requests=%d", err, requests)
+		}
+	})
+}
+
+func TestOnlyOneAuthenticationAttemptCanRunAtATime(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := authClient(func(*http.Request) *http.Response {
+		requests++
+		return authReply(201, beginResponse(approvalLink, pollLink))
+	})
+	account, _ := openAccount(client, dir)
+	opened := make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- account.Authenticate(ctx, func(ctx context.Context, _ string) error {
+			close(opened)
+			<-ctx.Done()
+			return ErrAuthCancelled
+		})
+	}()
+
+	<-opened
+	secondErr := account.Authenticate(t.Context(), func(context.Context, string) error { return nil })
+	cancel()
+	firstErr := <-done
+
+	if secondErr == nil || !errors.Is(firstErr, ErrAuthCancelled) || requests != 1 {
+		t.Fatalf("first=%v, second=%v, requests=%d", firstErr, secondErr, requests)
+	}
+}
+
+func TestUploadDoesNotFallBackWhenCredentialIsRejectedOrMissing(t *testing.T) {
+	dir := t.TempDir()
+	var calls []observedRequest
+	client := authClient(func(req *http.Request) *http.Response {
+		calls = append(calls, observe(req, time.Now()))
+		return authReply(401, `{"error":"leave the Authorization header out"}`)
+	})
+	missing, _ := openAccount(client, dir)
+	existing := saveTestCredential(t, dir)
+	account, _ := openAccount(client, dir)
+
+	_, missingErr := missing.Upload(t.Context(), UploadRequest{})
+	_, firstErr := account.Upload(t.Context(), UploadRequest{})
+	_, secondErr := account.Upload(t.Context(), UploadRequest{})
+
+	if !errors.Is(missingErr, ErrAuthenticationRequired) || !errors.Is(firstErr, ErrAuthenticationRejected) || !errors.Is(secondErr, ErrAuthenticationRejected) || account.Status() != "Reconnect required" {
+		t.Fatalf("missing=%v, first=%v, second=%v, status=%q", missingErr, firstErr, secondErr, account.Status())
+	}
+	if len(calls) != 1 || calls[0].url != BaseURL+"/api/uploader/upload" || calls[0].authorization != "Bearer "+existing.Token {
+		t.Fatal("unexpected authenticated request or anonymous fallback")
+	}
+}
+
+func TestUploadDoesNotFollowRedirectOrExposeEchoedCredential(t *testing.T) {
+	dir := t.TempDir()
+	existing := saveTestCredential(t, dir)
+	requests := 0
+	client := authClient(func(*http.Request) *http.Response {
+		requests++
+		res := authReply(307, "echo: "+existing.Token)
+		res.Header.Set("Location", BaseURL+"/other")
+		return res
+	})
+	account, _ := openAccount(client, dir)
+
+	_, err := account.Upload(t.Context(), UploadRequest{})
+
+	var uploadErr *UploadError
+	if requests != 1 || !errors.As(err, &uploadErr) || strings.Contains(uploadErr.Error()+uploadErr.Body, existing.Token) {
+		t.Fatal("followed a redirect or exposed the credential in upload diagnostics")
+	}
+}
+
+func TestUploadAcceptsSuccessWhenServerKeepsAllNewerSaves(t *testing.T) {
+	dir := t.TempDir()
+	saveTestCredential(t, dir)
+	account, _ := openAccount(authClient(func(*http.Request) *http.Response {
+		return authReply(200, `{"player":"Tester#1234","user_hash":42,"heroes":0,"kept_newer":["hero"]}`)
+	}), dir)
+
+	result, err := account.Upload(t.Context(), UploadRequest{})
+
+	if err != nil || result.Heroes != 0 || len(result.KeptNewer) != 1 {
+		t.Fatalf("result=%+v, error=%v", result, err)
+	}
+}
+
+type observedRequest struct {
+	url, method, authorization string
+	after                      time.Duration
+}
+
+func observe(req *http.Request, start time.Time) observedRequest {
+	return observedRequest{req.URL.String(), req.Method, req.Header.Get("Authorization"), time.Since(start)}
+}
+
+func authClient(handle func(*http.Request) *http.Response) *Client {
+	return &Client{URL: BaseURL, HTTP: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Body != nil {
+			req.Body.Close()
+		}
+		return handle(req), nil
+	})}}
+}
+
+func authReply(status int, body string) *http.Response {
+	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func beginResponse(approval, poll string) string {
+	data, err := json.Marshal(authAttempt{RedirectLink: approval, PollLink: poll, PollCode: pollSecret, ExpiresIn: 10, Interval: 1})
+	if err != nil {
+		panic(fmt.Sprintf("marshal auth fixture: %v", err))
+	}
+	return string(data)
+}
+
+func saveTestCredential(t *testing.T, dir string) storage.Credential {
+	t.Helper()
+	credential := storage.Credential{BattleTag: "Tester#1234", Token: strings.Repeat("X", 43)}
+	if err := storage.SaveCredential(dir, credential); err != nil {
+		t.Fatal(err)
+	}
+	return credential
+}
