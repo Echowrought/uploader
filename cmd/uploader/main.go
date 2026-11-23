@@ -20,6 +20,7 @@ import (
 
 func main() {
 	windowsSignInLaunch := flag.Bool("windows-sign-in-launch", false, "Internal: marks this invocation as a Windows sign-in launch.")
+	nonInteractive := flag.Bool("non-interactive", false, "use plain console output and do not start authentication")
 	authenticate := flag.Bool("authenticate", false, "connect to the Leaderboard without scanning or uploading saves (console)")
 	dryRun := flag.Bool("dry-run", false, "inspect one stable snapshot without uploading; use the console binary for terminal output")
 	var saveFolder string
@@ -31,7 +32,7 @@ func main() {
 		return nil
 	})
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--dry-run | --authenticate] [--save-folder PATH]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--dry-run | --authenticate] [--non-interactive] [--save-folder PATH]\n", os.Args[0])
 		if consoleBuild {
 			fmt.Fprintln(flag.CommandLine.Output(), "Console build: normal runs upload according to configuration, without the tray.")
 		} else {
@@ -42,6 +43,10 @@ func main() {
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "Unexpected positional arguments; use --save-folder PATH")
+		os.Exit(2)
+	}
+	if *nonInteractive && (*authenticate || (!consoleBuild && !*dryRun)) {
+		fmt.Fprintln(os.Stderr, "Use --non-interactive with the console executable or --dry-run, not with --authenticate.")
 		os.Exit(2)
 	}
 	if *authenticate && (!consoleBuild || *dryRun || saveFolder != "") {
@@ -58,7 +63,7 @@ func main() {
 	if *authenticate {
 		err = runAuthentication()
 	} else {
-		err = run(console, *dryRun, *windowsSignInLaunch, saveFolder)
+		err = run(console, *dryRun, *windowsSignInLaunch, *nonInteractive, saveFolder)
 	}
 	if err != nil {
 		if console {
@@ -70,13 +75,21 @@ func main() {
 	}
 }
 
-func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
+func run(console, dryRun, windowsSignInLaunch, nonInteractive bool, saveFolder string) error {
 	configDir, stateDir, err := dataFolders()
 	if err != nil {
 		return err
 	}
+	var ui consoleUI
 	if console {
-		if _, err := fmt.Fprintf(os.Stdout, "Configuration: %s\nLogs: %s\n", filepath.Join(configDir, "config.json"), filepath.Join(stateDir, "uploader.log")); err != nil {
+		var restore func()
+		ui, restore = openConsoleUI(os.Stdout, nonInteractive)
+		defer restore()
+		if err := ui.showPaths(
+			consoleRow{"Configuration", filepath.Join(configDir, "config.json")},
+			consoleRow{"Logs", filepath.Join(stateDir, "uploader.log")},
+			consoleRow{"Credentials", storage.CredentialPath(configDir)},
+		); err != nil {
 			return err
 		}
 	}
@@ -85,11 +98,19 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 		return err
 	}
 	defer release()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	account, credentialErr := leaderboard.OpenAccount(configDir)
 	if console && !dryRun {
 		if problem := account.UploadBlock(); problem != "" {
-			return fmt.Errorf("%s. Run with --authenticate, then start the uploader again", problem)
+			if nonInteractive {
+				return fmt.Errorf("%s. Run with --authenticate before retrying --non-interactive", problem)
+			}
+			if err := authenticateConsole(ctx, configDir, account, ui); err != nil {
+				return err
+			}
 		}
+		fmt.Fprintln(os.Stdout, account.Status())
 	}
 	config, _, err := storage.LoadConfig(configDir, func() (string, error) {
 		if saveFolder != "" {
@@ -119,16 +140,11 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 	defer writer.Close()
 	var output io.Writer = writer
 	if console {
-		output = io.MultiWriter(writer, os.Stdout)
+		output = io.MultiWriter(writer, ui.logWriter())
 	}
 	logger := log.New(output, "", log.Ldate|log.Ltime)
-	if !dryRun {
-		if credentialErr != nil {
-			logger.Printf("Could not load uploader credential: %v", credentialErr)
-		}
-		if console {
-			fmt.Fprintln(os.Stdout, account.Status())
-		}
+	if !console && credentialErr != nil {
+		logger.Printf("Could not load uploader credential: %v", credentialErr)
 	}
 	lastUpload, err := storage.LoadUploadState(stateDir)
 	if err != nil {
@@ -148,8 +164,9 @@ func run(console, dryRun, windowsSignInLaunch bool, saveFolder string) error {
 		// Inspect even if automatic uploads are paused; do not persist this override.
 		config.Automatic = true
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	application := &app.App{
 		Dir: stateDir, ConfigDir: configDir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
 		Client: client,
@@ -171,11 +188,27 @@ func runAuthentication() error {
 	if err != nil {
 		return err
 	}
+	ui, restore := openConsoleUI(os.Stdout, false)
+	defer restore()
+	if err := ui.showPaths(consoleRow{"Credentials", storage.CredentialPath(configDir)}); err != nil {
+		return err
+	}
 	release, err := singleInstance(stateDir)
 	if err != nil {
 		return err
 	}
 	defer release()
+	account, _ := leaderboard.OpenAccount(configDir)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if err := authenticateConsole(ctx, configDir, account, ui); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(ui.out, account.Status())
+	return err
+}
+
+func authenticateConsole(ctx context.Context, configDir string, account *leaderboard.Account, ui consoleUI) error {
 	proxyURL, err := storage.LoadProxyURL(configDir)
 	if err != nil {
 		return err
@@ -185,18 +218,17 @@ func runAuthentication() error {
 		return err
 	}
 	defer httpClient.CloseIdleConnections()
-	account, _ := leaderboard.OpenAccount(configDir)
 	authenticator := leaderboard.NewAuthenticator(leaderboard.NewClient(httpClient, account))
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if err := authenticator.Authenticate(ctx, func(_ context.Context, link string) error {
-		_, err := fmt.Fprintln(os.Stdout, "Open this link to approve upload access:\n"+link)
-		return err
-	}); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(os.Stdout, account.Status())
-	return err
+	stopSpinner := func() {}
+	defer func() { stopSpinner() }()
+	return authenticator.Authenticate(ctx, func(_ context.Context, link string) error {
+		stop, err := ui.showApproval(link)
+		if err != nil {
+			return err
+		}
+		stopSpinner = stop
+		return nil
+	})
 }
 
 func runConsole(ctx context.Context, cancel context.CancelFunc, application *app.App, done <-chan struct{}, dryRun bool) error {

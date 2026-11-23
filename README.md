@@ -39,10 +39,9 @@ Extract the Linux archive and first inspect your saves without uploading:
 ./cwg-rpg-uploader-console --dry-run --save-folder "/absolute/path/to/Warcraft III/CustomMapData/CWG2"
 ```
 
-Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, connect your Battle.net account and then start the uploader:
+Use the actual folder used by Wine/Proton; the app does not guess prefixes or scan for installations. The path is remembered in configuration. **When ready for real uploads**, start the uploader. If no credential is saved, it prints a browser link and waits for you to connect your Battle.net account before scanning:
 
 ```sh
-./cwg-rpg-uploader-console --authenticate
 ./cwg-rpg-uploader-console
 ```
 
@@ -79,7 +78,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Account connection
 
-Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it shows the authentication link directly. Click the link, choose **Open in default browser**, or choose **Copy link** and paste it into your browser. The dialog shows a spinner while waiting. Once approved, it shows a green check and a countdown on the **Start uploader** button. Click to start immediately, or wait 10 seconds for it to start automatically. Cancelling or failing to complete startup authentication exits the tray app. With no usable credential, the console exits with instructions to run `--authenticate`. Dry runs do not require authentication. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it shows the authentication link directly. Click the link, choose **Open in default browser**, or choose **Copy link** and paste it into your browser. The dialog shows a spinner while waiting. Once approved, it shows a green check and a countdown on the **Start uploader** button. Click to start immediately, or wait 10 seconds for it to start automatically. On startup without a usable credential, the console prints the link and waits for approval before scanning. Cancelling or failing startup authentication exits the app. Dry runs do not require authentication. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Use `--authenticate` to connect without starting the uploader. It does not need a save folder. Console authentication can be cancelled with Ctrl+C.
 
 ## Configuration and logs
 
@@ -94,7 +93,7 @@ The [configuration reference](CONFIGURATION.md) covers settings, disabling autom
 
 ## Console and dry run
 
-Both console builds print the full configuration and log-file paths on startup, including when settings cannot be loaded. They do not prompt or discover a save folder: supply `--save-folder PATH` if `save_folder` is not already configured. The folder is remembered for future runs.
+Both console builds print the configuration, log, and credential-file paths at startup, including when settings cannot be loaded. The credential itself is never printed. Interactive terminals show the startup paths and sign-in prompt in bordered panels, display a spinner during authentication, and color log timestamps and component names. Use `--non-interactive` for unattended runs: it disables colors, spinners, and startup authentication. Without a usable credential it exits with an instruction to run `--authenticate` separately. Set `NO_COLOR=1` to disable colors without changing authentication behavior. Redirected output and log files stay plain. They do not prompt or discover a save folder: supply `--save-folder PATH` if `save_folder` is not already configured. The folder is remembered for future runs.
 
 To inspect a settled snapshot without uploading on Windows:
 
