@@ -71,11 +71,11 @@ and verification instructions. Release-note ownership:
   user-facing bullets in `.github/release-notes/<tag>.md` before tagging. Put any
   action users need to take first. If the tag already exists and the draft has a
   placeholder, replace only that section before publishing.
-- **Workflow:** Supplies **Download** (including the stable-release link),
-  **Before you run** (Battle.net requirement, upload/privacy notice, and platform
-  instructions), and the verification and changelog links. It renders these from
-  `.github/release-notes/template.md` using the tag. Correct shared wording in the
-  template rather than rewriting generated sections at publication time.
+- **Workflow:** Supplies **Download**, **Before you run** (Battle.net requirement,
+  upload/privacy notice, and platform instructions), and the verification and
+  changelog links. It renders these from `.github/release-notes/template.md`
+  using the tag. Correct shared wording in the template rather than rewriting
+  generated sections at publication time.
 
 To preview locally, run:
 
@@ -85,10 +85,10 @@ To preview locally, run:
 
 See the [rendered v0.4.1 preview](docs/release-notes-v0.4.1-preview.md) for the
 layout. Review the notes and download-check the draft before publishing.
-Publishing retains the pre-release flag; when promoting to stable, clear the
-flag and remove the link pointing readers to the latest stable build. Stability
-comes from GitHub's release flag, not a tag suffix. Actions are pinned to commit
-SHAs; update those pins deliberately.
+Publishing retains the pre-release flag; clear it when promoting to stable.
+The notes work unchanged for either status. Stability comes from GitHub's
+release flag, not a tag suffix. Actions are pinned to commit SHAs; update those
+pins deliberately.
 
 A repository administrator should enable **release immutability** before
 publishing. The workflow does not enable it. When enabled, publication locks
