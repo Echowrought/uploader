@@ -18,6 +18,10 @@ func showMessage(title, message string) error {
 	return err
 }
 
+func authenticateTray(context.Context, *leaderboard.Account, *leaderboard.Authenticator) error {
+	return errors.New("Linux supports console authentication only")
+}
+
 func runTray(context.Context, context.CancelFunc, *app.App, string, *leaderboard.Account, *leaderboard.Authenticator, bool) error {
 	return errors.New("Linux supports console mode only")
 }

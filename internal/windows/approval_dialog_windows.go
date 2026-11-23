@@ -37,7 +37,6 @@ const (
 	dialogFooter        = 2            // TDE_FOOTER
 	dialogMainIcon      = 0            // TDIE_ICON_MAIN
 	dialogSetWindowIcon = 0x0080       // WM_SETICON
-	approvalStartDelay  = 10 * time.Second
 )
 
 var (
@@ -66,7 +65,7 @@ type approvalDialog struct {
 	// These fields are only accessed on the dialog thread.
 	closing     bool
 	spinner     int
-	startAt     time.Time
+	progress    approvalProgress
 	seconds     int
 	startButton uintptr
 	failure     error
@@ -148,7 +147,7 @@ func presentApproval(ctx context.Context, link string, approved <-chan struct{})
 	if state.failure != nil {
 		return state.failure
 	}
-	if choice == dialogStart && !state.startAt.IsZero() {
+	if choice == dialogStart && !state.progress.startAt.IsZero() {
 		return nil
 	}
 	return leaderboard.ErrAuthCancelled
@@ -214,21 +213,19 @@ func (state *approvalDialog) tick(window uintptr, now time.Time) {
 	if state.closing {
 		return
 	}
-	if state.ctx.Err() != nil || state.failure != nil {
-		button := uintptr(dialogCancel)
-		if !state.startAt.IsZero() {
-			button = dialogStart
-		}
-		state.closeWithButton(window, button)
-		return
+	approved := false
+	select {
+	case <-state.approved:
+		approved = true
+	default:
 	}
-	if !state.startAt.IsZero() {
-		remaining := state.startAt.Sub(now)
-		if remaining <= 0 {
-			state.closeWithButton(window, dialogStart)
-			return
-		}
-		seconds := int((remaining + time.Second - 1) / time.Second)
+	action, seconds := state.progress.step(now, approved, state.ctx.Err() != nil || state.failure != nil)
+	switch action {
+	case approvalCloseCancel:
+		state.closeWithButton(window, dialogCancel)
+	case approvalCloseStart:
+		state.closeWithButton(window, dialogStart)
+	case approvalCountdown:
 		if seconds != state.seconds {
 			if state.startButton == 0 {
 				state.startButton = findApprovalButton(window)
@@ -241,18 +238,15 @@ func (state *approvalDialog) tick(window uintptr, now time.Time) {
 				}
 			}
 		}
-		return
-	}
-	select {
-	case <-state.approved:
+	case approvalShowSuccess:
 		status, _, _ := sendDialogMessage.Call(window, dialogNavigate, 0, uintptr(unsafe.Pointer(state.successPage)))
 		if int32(status) < 0 {
 			state.failure = errors.New("could not display authentication confirmation")
 			state.closeWithButton(window, dialogCancel)
 			return
 		}
-		state.startAt, state.seconds = now.Add(approvalStartDelay), int(approvalStartDelay/time.Second)
-	default:
+		state.seconds = seconds
+	case approvalWaiting:
 		state.spinner = (state.spinner + 1) % len(state.spinnerIcons)
 		sendDialogMessage.Call(window, dialogUpdateIcon, dialogMainIcon, state.spinnerIcons[state.spinner])
 	}

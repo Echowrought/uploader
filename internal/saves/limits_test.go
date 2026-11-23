@@ -87,6 +87,21 @@ func TestScannerAcceptsConfiguredFileSizeLimitAndRetainsItForOversizedReplacemen
 	}
 }
 
+func TestDefaultScannerReadsFullSizeSaveWithoutTruncation(t *testing.T) {
+	folder := fixtureFolder(t)
+	limits := DefaultLimits()
+	writeSizedFixture(t, filepath.Join(folder, "HERO_01_123.pld"), limits.FileBytes)
+	scanner := NewScanner(folder, 0, limits)
+	now := time.Now()
+
+	_, _ = scanner.Scan(context.Background(), now)
+	snapshot, err := scanner.Scan(context.Background(), now)
+
+	if err != nil || int64(len(snapshot.Files["HERO_01_123.pld"].Text)) != limits.FileBytes || snapshot.Fingerprint == "" {
+		t.Fatalf("full-size save was rejected or truncated: %v", err)
+	}
+}
+
 func TestScannerRejectsDirectoryPastLimitInSecondBatch(t *testing.T) {
 	folder := fixtureFolder(t)
 	limits := smallLimits()

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -23,7 +24,7 @@ const (
 	issuedToken  = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
 )
 
-func TestAuthenticatePollsAtServerIntervalsAndPersistsCredential(t *testing.T) {
+func TestAuthenticatePollsAtServerIntervalsWithoutActivatingCredential(t *testing.T) {
 	dir := t.TempDir()
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
@@ -51,11 +52,14 @@ func TestAuthenticatePollsAtServerIntervalsAndPersistsCredential(t *testing.T) {
 		}
 		var displayed string
 
-		err = authenticator.Authenticate(t.Context(), func(_ context.Context, link string) error { displayed = link; return nil })
-		restored, restoreErr := OpenAccount(dir)
+		credential, err := authenticator.Authenticate(t.Context(), func(_ context.Context, link string) error { displayed = link; return nil })
+		_, loadErr := storage.LoadCredential(dir)
 
-		if err != nil || restoreErr != nil || displayed != approvalLink || restored.Status() != "Connected as Tester#1234" {
-			t.Fatalf("authenticate=%v, restore=%v, status=%q", err, restoreErr, restored.Status())
+		if err != nil || displayed != approvalLink || credential.Token != issuedToken || credential.BattleTag != "Tester#1234" {
+			t.Fatalf("authenticate=%v, displayed=%q, credential valid=%t", err, displayed, credential.Valid())
+		}
+		if !errors.Is(loadErr, os.ErrNotExist) || !account.MissingCredential() {
+			t.Fatal("authentication saved or activated the credential before publication")
 		}
 		want := []observedRequest{
 			{url: BaseURL + "/api/uploader/begin-auth", method: "POST"},
@@ -70,34 +74,6 @@ func TestAuthenticatePollsAtServerIntervalsAndPersistsCredential(t *testing.T) {
 			if calls[i] != want[i] {
 				t.Fatalf("request %d had wrong destination, authorization, method, or timing", i)
 			}
-		}
-	})
-}
-
-func TestApprovedCredentialIsNotActivatedUntilStartIsConfirmed(t *testing.T) {
-	dir := t.TempDir()
-	synctest.Test(t, func(t *testing.T) {
-		client := authClient(func(req *http.Request) *http.Response {
-			if req.URL.String() == pollLink {
-				return authReply(200, `{"token":"`+issuedToken+`","battletag":"Tester#1234","user_hash":42}`)
-			}
-			return authReply(201, beginResponse(approvalLink, pollLink))
-		})
-		account, _ := OpenAccount(dir)
-		client.account = account
-		var beforeStart, beforeSave error
-
-		err := NewAuthenticator(client).AuthenticateWithConfirmation(t.Context(), func(context.Context, string) error { return nil }, func() error {
-			_, beforeStart = account.uploadToken()
-			_, beforeSave = storage.LoadCredential(dir)
-			// Once redeemed, the device request's expiry must not cut the countdown short.
-			time.Sleep(10 * time.Second)
-			return nil
-		})
-		saved, loadErr := storage.LoadCredential(dir)
-
-		if !errors.Is(beforeStart, ErrAuthenticationRequired) || !errors.Is(beforeSave, os.ErrNotExist) || err != nil || loadErr != nil || saved.Token != issuedToken {
-			t.Fatalf("before start: upload=%v load=%v; after start: auth=%v load=%v", beforeStart, beforeSave, err, loadErr)
 		}
 	})
 }
@@ -118,7 +94,7 @@ func TestAuthenticateRejectsUntrustedLinksBeforePresentingOrPolling(t *testing.T
 			client.account, _ = OpenAccount(t.TempDir())
 			presented := false
 
-			err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { presented = true; return nil })
+			_, err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { presented = true; return nil })
 
 			if err == nil || presented || requests != 1 {
 				t.Fatalf("error=%v, presented=%t, requests=%d", err, presented, requests)
@@ -140,7 +116,7 @@ func TestFailedReconnectPreservesCredentialAndDoesNotExposeServerBody(t *testing
 		account, _ := OpenAccount(dir)
 		client.account = account
 
-		err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { return nil })
+		_, err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { return nil })
 		saved, loadErr := storage.LoadCredential(dir)
 
 		if err == nil || err.Error() != "authentication was denied in the browser" || loadErr != nil || saved != existing || account.Status() != "Connected as Tester#1234" {
@@ -160,10 +136,55 @@ func TestPollCancellationStopsWithoutSendingAnotherRequest(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		err := NewAuthenticator(client).Authenticate(ctx, func(context.Context, string) error { cancel(); return nil })
+		_, err := NewAuthenticator(client).Authenticate(ctx, func(context.Context, string) error { cancel(); return nil })
 
 		if !errors.Is(err, ErrAuthCancelled) || requests != 1 {
 			t.Fatalf("error=%v, requests=%d", err, requests)
+		}
+	})
+}
+
+func TestPendingAuthenticationExpiresWithoutReturningCredential(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := authClient(func(req *http.Request) *http.Response {
+			if req.URL.String() == pollLink {
+				return authReply(400, `{"error":"authorization_pending"}`)
+			}
+			return authReply(201, beginResponse(approvalLink, pollLink))
+		})
+		began := time.Now()
+
+		credential, err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { return nil })
+
+		if err == nil || !strings.Contains(err.Error(), "authentication expired") || credential.Valid() {
+			t.Fatalf("credential valid=%v error=%v", credential.Valid(), err)
+		}
+		if elapsed := time.Since(began); elapsed != 10*time.Second {
+			t.Fatalf("expired after %v; want the device deadline", elapsed)
+		}
+	})
+}
+
+func TestAuthenticationConnectionFailureBacksOffBeforePollingAgain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		began := time.Now()
+		var calls []time.Duration
+		client := &Client{URL: BaseURL, HTTP: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls = append(calls, time.Since(began))
+			switch len(calls) {
+			case 1:
+				return authReply(201, beginResponse(approvalLink, pollLink)), nil
+			case 2:
+				return nil, errors.New("connection reset")
+			default:
+				return authReply(200, `{"token":"`+issuedToken+`","battletag":"Tester#1234"}`), nil
+			}
+		})}}
+
+		credential, err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { return nil })
+
+		if err != nil || credential.Token != issuedToken || !reflect.DeepEqual(calls, []time.Duration{0, time.Second, 3 * time.Second}) {
+			t.Fatalf("error=%v polling times=%v", err, calls)
 		}
 	})
 }
@@ -182,15 +203,16 @@ func TestOnlyOneAuthenticationAttemptCanRunAtATime(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- authenticator.Authenticate(ctx, func(ctx context.Context, _ string) error {
+		_, err := authenticator.Authenticate(ctx, func(ctx context.Context, _ string) error {
 			close(opened)
 			<-ctx.Done()
 			return ErrAuthCancelled
 		})
+		done <- err
 	}()
 
 	<-opened
-	secondErr := authenticator.Authenticate(t.Context(), func(context.Context, string) error { return nil })
+	_, secondErr := authenticator.Authenticate(t.Context(), func(context.Context, string) error { return nil })
 	cancel()
 	firstErr := <-done
 

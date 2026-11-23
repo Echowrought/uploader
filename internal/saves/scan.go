@@ -232,7 +232,9 @@ func (result *scanResult) fits(file *File) bool {
 	return len(result.files) < result.limits.SaveFiles && result.bytes+settledSize(file) <= result.limits.SnapshotBytes
 }
 
+// Selection order must not depend on the filesystem's enumeration order.
 func splitFiles(entries []metadata) (core, extra []metadata) {
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	for _, m := range entries {
 		if essential(m.Name) {
 			core = append(core, m)
@@ -357,7 +359,6 @@ func inventory(ctx context.Context, folder string, maxEntries int) ([]metadata, 
 			break
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }
 

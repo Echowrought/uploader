@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,22 @@ func TestEssentialClassifiesKnownCategories(t *testing.T) {
 				t.Fatalf("essential(%q) = %v; want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSelectionOrdersScrambledInventoryWithinEachCategory(t *testing.T) {
+	entries := []metadata{
+		{Name: "MISC_z.pld"}, {Name: "HERO_z.pld"},
+		{Name: "MISC_a.pld"}, {Name: "ACCOUNT_player.pld"},
+		{Name: "MISC_m.pld"}, {Name: "HERO_a.pld"},
+	}
+
+	core, extra := splitFiles(entries)
+
+	wantCore := []metadata{{Name: "ACCOUNT_player.pld"}, {Name: "HERO_a.pld"}, {Name: "HERO_z.pld"}}
+	wantExtra := []metadata{{Name: "MISC_a.pld"}, {Name: "MISC_m.pld"}, {Name: "MISC_z.pld"}}
+	if !reflect.DeepEqual(core, wantCore) || !reflect.DeepEqual(extra, wantExtra) {
+		t.Fatalf("core=%v extra=%v; selection depends on enumeration order", core, extra)
 	}
 }
 

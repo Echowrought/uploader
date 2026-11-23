@@ -41,7 +41,7 @@ Content-Type: application/json
 Authorization: Bearer <upload-token>
 ```
 
-An explicit tray or console action starts device authorization with `/api/uploader/begin-auth`. The uploader displays only the approval link and sends the private polling code only to `/api/uploader/poll-auth`. The browser session and explicit account approval are managed by the Leaderboard. The uploader stores the returned upload-only token in a private per-user file, does not follow API redirects, and blocks uploads if the credential is missing or rejected.
+Startup without a usable local credential completes device authorization with `/api/uploader/begin-auth` before scanning begins. Explicit reconnect actions use the same protocol while the coordinator remains running. The uploader displays only the approval link and sends the private polling code only to `/api/uploader/poll-auth`. The browser session and explicit account approval are managed by the Leaderboard. The uploader stores the returned upload-only token in a private per-user file, does not follow API redirects, and blocks uploads if the credential is missing or rejected.
 
 Example request structure:
 
@@ -166,6 +166,7 @@ Settling checks reduce incomplete reads but cannot guarantee that multiple files
 - Allow only one upload in flight.
 - Coalesce undelivered folder events and pending uploads to the latest stable snapshot rather than retaining a queue of historical snapshots. Folder updates contain save-folder identity and snapshot data; the coordinator adds a monotonic work ID when forwarding accepted work.
 - Upload now calls the poller's `requestEmission()` directly before an immediate tick. This preserves an already-latched `forceNextEmission`, treating the next stable snapshot as new even if unchanged. Clear the latch only after emission; replacing the poller discards its un-emitted force request but never changes accepted delivery work. The poller scans when automatic polling is enabled or a forced emission is pending. User-intent flags do not travel in events or results.
+- Reconnect completion requests an automatic re-emission through the coordinator, which checks the current Automatic uploads setting before creating work. Never infer permission from cached tray status or turn this request into a manual upload.
 - Automatic uploads controls creation of new automatic work, not delivery. Turning it off stops automatic folder polling; already accepted snapshots, active requests, and retries continue. Upload now remains available without special delivery permissions. Quit cancels active network work and stops retries. Subscribe to both `os.Interrupt` and Windows' `syscall.SIGTERM` notification for console-close/logoff/shutdown events, allowing best-effort cancellation and successful-event persistence before the operating system's termination deadline.
 - Retain pending data after transient failures and retry it even if no new folder event arrives. Prefer newer pending data over the failed snapshot when available.
 - Before each attempt, the single uploader worker takes the latest snapshot from a mutex-protected pending slot, preferring it over the failed snapshot after backoff. Do not wait for a future emission or consult the poller's force flag. Preserve Retry-After using a private retry timer independent of polling ticks; new snapshots never interrupt or postpone that wait.
