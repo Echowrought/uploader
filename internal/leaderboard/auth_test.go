@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	approvalLink = BaseURL + "/api/uploader/approve?request=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	approvalLink = BaseURL + "/connect-uploader?request=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	pollLink     = BaseURL + "/api/uploader/poll-auth"
 	pollSecret   = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 	issuedToken  = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
@@ -78,12 +78,35 @@ func TestAuthenticatePollsAtServerIntervalsWithoutActivatingCredential(t *testin
 	})
 }
 
+func TestBeginAuthAllowsApprovalPageAndQueryChangesWithinLeaderboard(t *testing.T) {
+	for _, link := range []string{
+		BaseURL + "/api/uploader/approve?request=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		BaseURL + "/account/connection/confirm?attempt=opaque&language=en",
+	} {
+		client := authClient(func(*http.Request) *http.Response { return authReply(201, beginResponse(link, pollLink)) })
+
+		attempt, err := client.beginAuth(t.Context())
+
+		if err != nil || attempt.RedirectLink != link {
+			t.Fatalf("approval page was not accepted: %v", err)
+		}
+	}
+}
+
 func TestAuthenticateRejectsUntrustedLinksBeforePresentingOrPolling(t *testing.T) {
-	for _, tc := range []struct{ name, approval, poll string }{
-		{"foreign poll", approvalLink, "https://other.example/api/uploader/poll-auth"},
-		{"foreign approval", strings.Replace(approvalLink, BaseURL, "https://other.example", 1), pollLink},
-		{"secret in approval", strings.Replace(approvalLink, strings.Repeat("A", 43), pollSecret, 1), pollLink},
-		{"query on poll", approvalLink, pollLink + "?other=1"},
+	for _, tc := range []struct{ name, approval, poll, reason string }{
+		{"foreign poll", approvalLink, "https://other.example/api/uploader/poll-auth", "unexpected polling endpoint"},
+		{"foreign approval", strings.Replace(approvalLink, BaseURL, "https://other.example", 1), pollLink, "outside the Leaderboard HTTPS origin"},
+		{"alternate https port", "https://cwg.echowrought.com:8443/leaderboard/connect-uploader", pollLink, "outside the Leaderboard HTTPS origin"},
+		{"plain HTTP", strings.Replace(approvalLink, "https:", "http:", 1), pollLink, "outside the Leaderboard HTTPS origin"},
+		{"adjacent mount", BaseURL + "-admin/approve", pollLink, "outside the canonical Leaderboard path"},
+		{"outside mount", "https://cwg.echowrought.com/admin/approve", pollLink, "outside the canonical Leaderboard path"},
+		{"dot segments", BaseURL + "/../admin/approve", pollLink, "outside the canonical Leaderboard path"},
+		{"escaped dot segments", BaseURL + "/%2e%2e/admin/approve", pollLink, "outside the canonical Leaderboard path"},
+		{"escaped slash", BaseURL + "/connect%2fuploader", pollLink, "outside the canonical Leaderboard path"},
+		{"secret in approval", strings.Replace(approvalLink, strings.Repeat("A", 43), pollSecret, 1), pollLink, "contains the private polling code"},
+		{"encoded secret in approval", BaseURL + "/connect-uploader?attempt=" + strings.Repeat("%42", 43), pollLink, "contains the private polling code"},
+		{"query on poll", approvalLink, pollLink + "?other=1", "unexpected polling endpoint"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests int
@@ -96,10 +119,23 @@ func TestAuthenticateRejectsUntrustedLinksBeforePresentingOrPolling(t *testing.T
 
 			_, err := NewAuthenticator(client).Authenticate(t.Context(), func(context.Context, string) error { presented = true; return nil })
 
-			if err == nil || presented || requests != 1 {
-				t.Fatalf("error=%v, presented=%t, requests=%d", err, presented, requests)
+			if err == nil || !strings.Contains(err.Error(), "begin-auth, HTTP 201") || !strings.Contains(err.Error(), tc.reason) || presented || requests != 1 {
+				t.Fatalf("missing diagnostic or unexpected traffic: error=%v, presented=%t, requests=%d", err, presented, requests)
+			}
+			if strings.Contains(err.Error(), pollSecret) || strings.Contains(err.Error(), tc.approval) || strings.Contains(err.Error(), tc.poll) {
+				t.Fatal("authentication diagnostic exposed response data")
 			}
 		})
+	}
+}
+
+func TestMalformedAuthenticationResponseReportsStageAndStatusWithoutBody(t *testing.T) {
+	client := authClient(func(*http.Request) *http.Response { return authReply(201, `<html>`+pollSecret+`</html>`) })
+
+	_, err := client.beginAuth(t.Context())
+
+	if err == nil || !strings.Contains(err.Error(), "begin-auth, HTTP 201") || !strings.Contains(err.Error(), "expected a JSON response") || strings.Contains(err.Error(), pollSecret) {
+		t.Fatal("expected a redacted begin-auth JSON diagnostic")
 	}
 }
 

@@ -25,10 +25,13 @@ func TestLinuxConsoleFirstRunAttemptsAuthenticationBeforeScanning(t *testing.T) 
 	command := consoleCommand(t, ctx, root)
 
 	output, err := command.CombinedOutput()
-	_, logErr := os.Stat(filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log"))
+	log, logErr := os.ReadFile(filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log"))
 
-	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "authentication connection failed") || !os.IsNotExist(logErr) {
+	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "authentication connection failed") || logErr != nil {
 		t.Fatalf("exit=%v timeout=%v log=%v output=%s", err, ctx.Err(), logErr, output)
+	}
+	if !strings.Contains(string(log), "[auth] Leaderboard begin-auth: authentication connection failed") || strings.Contains(string(log), "[app] started") {
+		t.Fatalf("expected only the startup authentication diagnostic: %q", log)
 	}
 }
 

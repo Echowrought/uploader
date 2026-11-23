@@ -21,5 +21,5 @@ func authenticateTray(ctx context.Context, account *leaderboard.Account, authent
 }
 
 func runTray(ctx context.Context, cancel context.CancelFunc, application *app.App, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, windowsSignInLaunch bool) error {
-	return ui.RunTray(ctx, cancel, application.Commands, application.Updates, application.Config, dir, account, authenticator, windowsSignInLaunch)
+	return ui.RunTray(ctx, cancel, application.Commands, application.Updates, application.Config, dir, account, authenticator, application.Logger, windowsSignInLaunch)
 }
