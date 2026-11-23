@@ -65,10 +65,22 @@ do not promise Semantic Versioning compatibility semantics.
 The tag-triggered workflow creates a draft marked **pre-release** by default,
 containing the Windows tray installer, two Windows portable ZIPs, a Linux console
 tar.gz, platform-specific attested build information,
-verification instructions, and generated change notes. Review and download-check
-it before publishing. Publishing retains the pre-release flag; explicitly clear
-it when promoting to stable. Stability comes from GitHub's release flag, not a
-tag suffix. Actions are pinned to commit SHAs; update those pins deliberately.
+and verification instructions. The draft uses `.github/release-notes/template.md`
+for downloads and first-run guidance. Before tagging, put one to three
+user-facing bullets in `.github/release-notes/<tag>.md` for **What's changed**.
+If there is no summary file, the draft prompts you to fill in that section before
+publishing. To preview locally, run:
+
+```powershell
+.\scripts\render-release-notes.ps1 -Tag v0.4.1 -PreviousTag v0.4.0
+```
+
+See the [rendered v0.4.1 preview](docs/release-notes-v0.4.1-preview.md) for the
+layout. Review the notes and download-check the draft before publishing.
+Publishing retains the pre-release flag; when promoting to stable, clear the
+flag and remove the link pointing readers to the latest stable build. Stability
+comes from GitHub's release flag, not a tag suffix. Actions are pinned to commit
+SHAs; update those pins deliberately.
 
 A repository administrator should enable **release immutability** before
 publishing. The workflow does not enable it. When enabled, publication locks
