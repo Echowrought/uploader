@@ -65,11 +65,19 @@ do not promise Semantic Versioning compatibility semantics.
 The tag-triggered workflow creates a draft marked **pre-release** by default,
 containing the Windows tray installer, two Windows portable ZIPs, a Linux console
 tar.gz, platform-specific attested build information,
-and verification instructions. The draft uses `.github/release-notes/template.md`
-for downloads and first-run guidance. Before tagging, put one to three
-user-facing bullets in `.github/release-notes/<tag>.md` for **What's changed**.
-If there is no summary file, the draft prompts you to fill in that section before
-publishing. To preview locally, run:
+and verification instructions. Release-note ownership:
+
+- **Release author (human or agent):** Write only **What's changed**: one to three
+  user-facing bullets in `.github/release-notes/<tag>.md` before tagging. Put any
+  action users need to take first. If the tag already exists and the draft has a
+  placeholder, replace only that section before publishing.
+- **Workflow:** Supplies **Download** (including the stable-release link),
+  **Before you run** (Battle.net requirement, upload/privacy notice, and platform
+  instructions), and the verification and changelog links. It renders these from
+  `.github/release-notes/template.md` using the tag. Correct shared wording in the
+  template rather than rewriting generated sections at publication time.
+
+To preview locally, run:
 
 ```powershell
 .\scripts\render-release-notes.ps1 -Tag v0.4.1 -PreviousTag v0.4.0
