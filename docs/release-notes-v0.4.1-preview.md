@@ -10,8 +10,6 @@
 - [Portable Windows console app](https://github.com/cwg-rpg-community/uploader/releases/download/v0.4.1/cwg-rpg-uploader-console-v0.4.1-windows-amd64.zip)
 - [Linux console app (x86-64)](https://github.com/cwg-rpg-community/uploader/releases/download/v0.4.1/cwg-rpg-uploader-console-v0.4.1-linux-amd64.tar.gz)
 
-Prefer a stable build? [Download the latest stable release](https://github.com/cwg-rpg-community/uploader/releases/latest).
-
 ## Before you run
 
 **Uploads require a Battle.net account connected through the [CWG Leaderboard](https://cwg.echowrought.com/leaderboard/).** On first launch, sign in and approve upload access in your browser. Once connected, automatic uploads are on by default and can include existing saves. Submissions may appear publicly. The uploader sends eligible `.pld` files directly inside the selected folder; it never scans subfolders or modifies your saves.
