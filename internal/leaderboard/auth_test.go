@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -69,6 +70,34 @@ func TestAuthenticatePollsAtServerIntervalsAndPersistsCredential(t *testing.T) {
 			if calls[i] != want[i] {
 				t.Fatalf("request %d had wrong destination, authorization, method, or timing", i)
 			}
+		}
+	})
+}
+
+func TestApprovedCredentialIsNotActivatedUntilStartIsConfirmed(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		client := authClient(func(req *http.Request) *http.Response {
+			if req.URL.String() == pollLink {
+				return authReply(200, `{"token":"`+issuedToken+`","battletag":"Tester#1234","user_hash":42}`)
+			}
+			return authReply(201, beginResponse(approvalLink, pollLink))
+		})
+		account, _ := OpenAccount(dir)
+		client.account = account
+		var beforeStart, beforeSave error
+
+		err := NewAuthenticator(client).AuthenticateWithConfirmation(t.Context(), func(context.Context, string) error { return nil }, func() error {
+			_, beforeStart = account.uploadToken()
+			_, beforeSave = storage.LoadCredential(dir)
+			// Once redeemed, the device request's expiry must not cut the countdown short.
+			time.Sleep(10 * time.Second)
+			return nil
+		})
+		saved, loadErr := storage.LoadCredential(dir)
+
+		if !errors.Is(beforeStart, ErrAuthenticationRequired) || !errors.Is(beforeSave, os.ErrNotExist) || err != nil || loadErr != nil || saved.Token != issuedToken {
+			t.Fatalf("before start: upload=%v load=%v; after start: auth=%v load=%v", beforeStart, beforeSave, err, loadErr)
 		}
 	})
 }

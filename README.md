@@ -79,7 +79,7 @@ Transient failures retry automatically. Rejected submissions wait for changed sa
 
 ## Account connection
 
-Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it shows the authentication link directly. Choose **Open in default browser**, or **Copy link** and paste it into your browser. Copying keeps the dialog open and shows that the uploader is waiting for approval. Cancelling or failing to complete startup authentication exits the tray app. With no usable credential, the console exits with instructions to run `--authenticate`. Dry runs do not require authentication. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
+Uploads require a connected Battle.net account. When the tray starts without a usable saved credential, including at Windows sign-in, it shows the authentication link directly. Click the link, choose **Open in default browser**, or choose **Copy link** and paste it into your browser. The dialog shows a spinner while waiting. Once approved, it shows a green check and a countdown on the **Start uploader** button. Click to start immediately, or wait 10 seconds for it to start automatically. Cancelling or failing to complete startup authentication exits the tray app. With no usable credential, the console exits with instructions to run `--authenticate`. Dry runs do not require authentication. If a saved credential is rejected during an upload, uploads stop without falling back to anonymous. If automatic uploads are enabled, the tray shows a red × and a tooltip explaining why. Reconnect via **Authenticate…** or `--authenticate`. Console authentication prints only the browser approval link and can be cancelled with Ctrl+C; it does not need a save folder or upload any files.
 
 ## Configuration and logs
 
@@ -135,3 +135,5 @@ Both build scripts default to version `dev`. Use `-Version vX.Y.Z` to embed a re
 ## License
 
 [MIT](LICENSE). Keep the [third-party notices](THIRD_PARTY_NOTICES.md) with distributions.
+
+The authentication spinner is adapted from [Font Awesome Free 6.7.2](https://github.com/FortAwesome/Font-Awesome/blob/6.7.2/svgs/solid/spinner.svg), © 2024 Fonticons, Inc., under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It is rasterized, recolored, and animated.

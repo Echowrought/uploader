@@ -35,6 +35,12 @@ type Authenticator struct {
 func NewAuthenticator(client *Client) *Authenticator { return &Authenticator{client: client} }
 
 func (a *Authenticator) Authenticate(ctx context.Context, present func(context.Context, string) error) error {
+	return a.AuthenticateWithConfirmation(ctx, present, nil)
+}
+
+// AuthenticateWithConfirmation can hold an approved credential until the UI
+// confirms that uploads may resume. The device polling deadline ends at approval.
+func (a *Authenticator) AuthenticateWithConfirmation(ctx context.Context, present func(context.Context, string) error, confirm func() error) error {
 	a.mu.Lock()
 	if a.pending {
 		a.mu.Unlock()
@@ -44,21 +50,41 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.pending = false; a.mu.Unlock() }()
 
-	began := time.Now()
-	attempt, err := a.client.beginAuth(ctx)
+	credential, err := a.pollApproval(ctx, present)
+	if err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return authContextError(ctx)
 	}
+	if confirm != nil {
+		if err := confirm(); err != nil {
+			return err
+		}
+	}
+	if ctx.Err() != nil {
+		return authContextError(ctx)
+	}
+	return a.client.account.SetCredential(credential)
+}
+
+func (a *Authenticator) pollApproval(ctx context.Context, present func(context.Context, string) error) (storage.Credential, error) {
+	var empty storage.Credential
+	began := time.Now()
+	attempt, err := a.client.beginAuth(ctx)
+	if ctx.Err() != nil {
+		return empty, authContextError(ctx)
+	}
 	if err != nil {
-		return err
+		return empty, err
 	}
 	ctx, cancel := context.WithDeadline(ctx, began.Add(time.Duration(attempt.ExpiresIn)*time.Second))
 	defer cancel()
 	if ctx.Err() != nil {
-		return authContextError(ctx)
+		return empty, authContextError(ctx)
 	}
 	if err := present(ctx, attempt.RedirectLink); err != nil {
-		return err
+		return empty, err
 	}
 	interval := time.Duration(attempt.Interval) * time.Second
 	delay := interval
@@ -67,16 +93,16 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return authContextError(ctx)
+			return empty, authContextError(ctx)
 		case <-timer.C:
 		}
 		response, status, after, err := a.client.pollAuth(ctx, attempt)
 		if ctx.Err() != nil {
-			return authContextError(ctx)
+			return empty, authContextError(ctx)
 		}
 		if err != nil {
 			if !errors.Is(err, errAuthConnection) {
-				return err
+				return empty, err
 			}
 			delay = max(interval, min(delay*2, time.Minute))
 			continue
@@ -84,15 +110,15 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 		delay = max(interval, after)
 		switch {
 		case status == http.StatusOK && response.Valid() && response.Token != attempt.PollCode:
-			return a.client.account.SetCredential(response.Credential)
+			return response.Credential, nil
 		case status == http.StatusBadRequest && response.Error == "authorization_pending", status == http.StatusTooManyRequests, status >= 500:
 			continue
 		case status == http.StatusBadRequest && response.Error == "access_denied":
-			return errors.New("authentication was denied in the browser")
+			return empty, errors.New("authentication was denied in the browser")
 		case status == http.StatusBadRequest && response.Error == "expired_token":
-			return errors.New("authentication expired or was already redeemed; start again")
+			return empty, errors.New("authentication expired or was already redeemed; start again")
 		default:
-			return fmt.Errorf("authentication failed (HTTP %d)", status)
+			return empty, fmt.Errorf("authentication failed (HTTP %d)", status)
 		}
 	}
 }

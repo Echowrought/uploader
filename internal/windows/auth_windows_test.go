@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -30,32 +31,49 @@ func TestNativeApprovalDialogUsesPackedWindowsABI(t *testing.T) {
 	}
 }
 
-func TestApprovalWindowClosesWhenAuthenticationFinishes(t *testing.T) {
+func TestApprovalContentShowsTheFullLinkAsAClickableLabel(t *testing.T) {
+	link := leaderboard.BaseURL + "/api/uploader/approve?request=" + strings.Repeat("A", 43)
+
+	content := strings.ReplaceAll(approvalContent(link), "\r\n", "")
+
+	if !strings.Contains(content, `<a href="approval">`+link+`</a>`) {
+		t.Fatalf("full approval link was not displayed as a hyperlink: %s", content)
+	}
+}
+
+func TestApprovalWaitsForTheWindowToConfirmStart(t *testing.T) {
 	shown := make(chan struct{})
-	closed := make(chan struct{})
-	authenticate := func(ctx context.Context, present func(context.Context, string) error) error {
+	start := make(chan struct{})
+	var activationBeforeStart bool
+	authenticate := func(ctx context.Context, present func(context.Context, string) error, confirm func() error) error {
 		if err := present(ctx, "approval link"); err != nil {
 			return err
 		}
-		<-shown
+		if err := confirm(); err != nil {
+			return err
+		}
+		select {
+		case <-start:
+		default:
+			activationBeforeStart = true
+		}
 		return nil
 	}
-	present := func(ctx context.Context, _ string) error {
+	present := func(_ context.Context, _ string, approved <-chan struct{}) error {
+		<-approved
 		close(shown)
-		<-ctx.Done()
-		close(closed)
-		return leaderboard.ErrAuthCancelled
+		<-start
+		return nil
 	}
+	done := make(chan error, 1)
 
-	err := authenticateWithApproval(t.Context(), authenticate, present)
+	go func() { done <- authenticateWithApproval(t.Context(), authenticate, present) }()
+	<-shown
+	close(start)
+	err := <-done
 
-	if err != nil {
-		t.Fatalf("successful authentication was treated as a cancellation: %v", err)
-	}
-	select {
-	case <-closed:
-	default:
-		t.Fatal("returned before the approval window closed")
+	if err != nil || activationBeforeStart {
+		t.Fatalf("error=%v, activated before confirmation=%v", err, activationBeforeStart)
 	}
 }
 
@@ -63,7 +81,7 @@ func TestApprovalWindowFailureStopsAuthentication(t *testing.T) {
 	for _, cause := range []error{leaderboard.ErrAuthCancelled, errors.New("window crashed")} {
 		t.Run(cause.Error(), func(t *testing.T) {
 			stopped := make(chan struct{})
-			authenticate := func(ctx context.Context, present func(context.Context, string) error) error {
+			authenticate := func(ctx context.Context, present func(context.Context, string) error, _ func() error) error {
 				if err := present(ctx, "approval link"); err != nil {
 					return err
 				}
@@ -72,7 +90,7 @@ func TestApprovalWindowFailureStopsAuthentication(t *testing.T) {
 				return ctx.Err()
 			}
 
-			err := authenticateWithApproval(t.Context(), authenticate, func(context.Context, string) error { return cause })
+			err := authenticateWithApproval(t.Context(), authenticate, func(context.Context, string, <-chan struct{}) error { return cause })
 
 			if !errors.Is(err, cause) {
 				t.Fatalf("window error lost: %v", err)
