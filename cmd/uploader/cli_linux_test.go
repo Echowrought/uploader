@@ -17,7 +17,7 @@ import (
 	"cwgrpguploader/internal/storage"
 )
 
-func TestLinuxConsoleFirstRunWithoutCredentialExitsBeforeScanning(t *testing.T) {
+func TestLinuxConsoleFirstRunAttemptsAuthenticationBeforeScanning(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -27,8 +27,26 @@ func TestLinuxConsoleFirstRunWithoutCredentialExitsBeforeScanning(t *testing.T) 
 	output, err := command.CombinedOutput()
 	_, logErr := os.Stat(filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log"))
 
-	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "--authenticate") || !os.IsNotExist(logErr) {
+	if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "authentication connection failed") || !os.IsNotExist(logErr) {
 		t.Fatalf("exit=%v timeout=%v log=%v output=%s", err, ctx.Err(), logErr, output)
+	}
+}
+
+func TestLinuxNonInteractiveConsoleDoesNotStartAuthentication(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	command := consoleCommand(t, ctx, root, "--non-interactive")
+
+	output, err := command.CombinedOutput()
+
+	text := string(output)
+	if ctx.Err() != nil || err == nil || !strings.Contains(text, "Run with --authenticate before retrying --non-interactive") {
+		t.Fatalf("exit=%v timeout=%v output=%s", err, ctx.Err(), text)
+	}
+	if strings.ContainsAny(text, "\x1b") || strings.Contains(text, "Awaiting authentication") || strings.Contains(text, "authentication connection failed") {
+		t.Fatalf("non-interactive startup used terminal effects or attempted authentication: %q", text)
 	}
 }
 
@@ -46,8 +64,9 @@ func TestLinuxConsoleFirstRunRequiresSaveFolder(t *testing.T) {
 		t.Fatalf("error=%v config=%v output=%s", err, configErr, output)
 	}
 	if !strings.Contains(string(output), "Configuration: "+filepath.Join(root, "config", "cwg-rpg-uploader", "config.json")) ||
-		!strings.Contains(string(output), "Logs: "+filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log")) {
-		t.Fatalf("startup error did not report settings/log paths: %s", output)
+		!strings.Contains(string(output), "Logs: "+filepath.Join(root, "state", "cwg-rpg-uploader", "uploader.log")) ||
+		!strings.Contains(string(output), "Credentials: "+storage.CredentialPath(filepath.Join(root, "config", "cwg-rpg-uploader"))) {
+		t.Fatalf("startup error did not report settings/log/credential paths: %s", output)
 	}
 }
 

@@ -27,8 +27,10 @@ func (c Credential) Valid() bool {
 	return uploadToken.MatchString(c.Token) && battleTag.MatchString(c.BattleTag) && strings.IndexFunc(c.BattleTag, unicode.IsControl) == -1
 }
 
+func CredentialPath(dir string) string { return filepath.Join(dir, credentialFile) }
+
 func LoadCredential(dir string) (Credential, error) {
-	path := filepath.Join(dir, credentialFile)
+	path := CredentialPath(dir)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return Credential{}, err
@@ -56,11 +58,11 @@ func SaveCredential(dir string, credential Credential) error {
 	if !credential.Valid() {
 		return errors.New("invalid uploader credential")
 	}
-	return writeJSON(filepath.Join(dir, credentialFile), credential, protectCredential)
+	return writeJSON(CredentialPath(dir), credential, protectCredential)
 }
 
 func RemoveCredential(dir string) error {
-	err := os.Remove(filepath.Join(dir, credentialFile))
+	err := os.Remove(CredentialPath(dir))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
