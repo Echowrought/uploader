@@ -69,7 +69,7 @@ func (c *Client) Upload(ctx context.Context, request UploadRequest) (Result, err
 	if err != nil {
 		return Result{}, err
 	}
-	if !trustedURL(c.URL, BaseURL, false) {
+	if c.URL != BaseURL {
 		return Result{}, errors.New("invalid Leaderboard destination")
 	}
 	result, err := c.upload(ctx, request, token)

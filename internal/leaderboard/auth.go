@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -20,7 +21,6 @@ import (
 var (
 	ErrAuthCancelled  = errors.New("authentication cancelled")
 	errAuthConnection = errors.New("authentication connection failed")
-	approvalQuery     = regexp.MustCompile(`^request=[A-Za-z0-9_-]{43}$`)
 	pollCodePattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 )
 
@@ -73,7 +73,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 			return empty, authContextError(ctx)
 		case <-timer.C:
 		}
-		response, status, after, err := a.client.pollAuth(ctx, attempt)
+		response, status, after, err := a.client.pollAuth(ctx, attempt.PollCode)
 		if ctx.Err() != nil {
 			return empty, authContextError(ctx)
 		}
@@ -86,7 +86,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 		}
 		delay = max(interval, after)
 		switch {
-		case status == http.StatusOK && response.Valid() && response.Token != attempt.PollCode:
+		case status == http.StatusOK:
+			if !response.Valid() || response.Token == attempt.PollCode {
+				return empty, invalidAuthResponse("poll-auth", status, "invalid upload credential")
+			}
 			return response.Credential, nil
 		case status == http.StatusBadRequest && response.Error == "authorization_pending", status == http.StatusTooManyRequests, status >= 500:
 			continue
@@ -95,7 +98,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, present func(context.C
 		case status == http.StatusBadRequest && response.Error == "expired_token":
 			return empty, errors.New("authentication expired or was already redeemed; start again")
 		default:
-			return empty, fmt.Errorf("authentication failed (HTTP %d)", status)
+			return empty, fmt.Errorf("Leaderboard poll-auth failed (HTTP %d)", status)
 		}
 	}
 }
@@ -122,32 +125,41 @@ type authResponse struct {
 
 func (c *Client) beginAuth(ctx context.Context) (authAttempt, error) {
 	var attempt authAttempt
-	if !trustedURL(c.URL, BaseURL, false) {
+	if c.URL != BaseURL {
 		return attempt, errors.New("invalid Leaderboard destination")
 	}
-	status, _, err := c.authPOST(ctx, c.URL+"/api/uploader/begin-auth", "", &attempt)
+	status, _, err := c.authPOST(ctx, "begin-auth", "", &attempt)
 	if err != nil {
 		return attempt, err
 	}
 	if status != http.StatusCreated {
-		return attempt, fmt.Errorf("could not start authentication (HTTP %d)", status)
+		return attempt, fmt.Errorf("Leaderboard begin-auth failed (HTTP %d)", status)
 	}
-	if !trustedURL(attempt.RedirectLink, c.URL+"/api/uploader/approve", true) ||
-		!trustedURL(attempt.PollLink, c.URL+"/api/uploader/poll-auth", false) || !pollCodePattern.MatchString(attempt.PollCode) ||
-		strings.Contains(attempt.RedirectLink, attempt.PollCode) || attempt.ExpiresIn < 1 || attempt.ExpiresIn > 3600 || attempt.Interval < 1 || attempt.Interval >= attempt.ExpiresIn {
-		return authAttempt{}, errors.New("invalid Leaderboard authentication response")
+	var problem string
+	switch {
+	case attempt.PollLink != c.URL+"/api/uploader/poll-auth":
+		problem = "unexpected polling endpoint"
+	case !pollCodePattern.MatchString(attempt.PollCode):
+		problem = "missing or invalid polling code"
+	case attempt.ExpiresIn < 1 || attempt.ExpiresIn > 3600 || attempt.Interval < 1 || attempt.Interval >= attempt.ExpiresIn:
+		problem = "invalid expiry or polling interval"
+	default:
+		problem = approvalLinkProblem(attempt.RedirectLink, c.URL, attempt.PollCode)
+	}
+	if problem != "" {
+		return authAttempt{}, invalidAuthResponse("begin-auth", status, problem)
 	}
 	return attempt, nil
 }
 
-func (c *Client) pollAuth(ctx context.Context, attempt authAttempt) (authResponse, int, time.Duration, error) {
+func (c *Client) pollAuth(ctx context.Context, pollCode string) (authResponse, int, time.Duration, error) {
 	var response authResponse
-	status, after, err := c.authPOST(ctx, attempt.PollLink, attempt.PollCode, &response)
+	status, after, err := c.authPOST(ctx, "poll-auth", pollCode, &response)
 	return response, status, after, err
 }
 
-func (c *Client) authPOST(ctx context.Context, target, secret string, out any) (int, time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+func (c *Client) authPOST(ctx context.Context, stage, secret string, out any) (int, time.Duration, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/api/uploader/"+stage, nil)
 	if err != nil {
 		return 0, 0, errors.New("invalid authentication request")
 	}
@@ -157,17 +169,20 @@ func (c *Client) authPOST(ctx context.Context, target, secret string, out any) (
 	}
 	response, err := c.doPrivate(req)
 	if err != nil {
-		return 0, 0, errAuthConnection
+		return 0, 0, fmt.Errorf("Leaderboard %s: %w", stage, errAuthConnection)
 	}
 	defer response.Body.Close()
 	after := retryAfter(response.Header.Get("Retry-After"), time.Now())
 	if response.StatusCode == http.StatusOK || response.StatusCode == http.StatusCreated || response.StatusCode == http.StatusBadRequest {
 		data, err := io.ReadAll(io.LimitReader(response.Body, 4097))
 		if err != nil {
-			return 0, 0, errAuthConnection
+			return 0, 0, fmt.Errorf("Leaderboard %s (HTTP %d): %w", stage, response.StatusCode, errAuthConnection)
 		}
-		if len(data) > 4096 || json.Unmarshal(data, out) != nil {
-			return 0, 0, errors.New("invalid Leaderboard authentication response")
+		if len(data) > 4096 {
+			return 0, 0, invalidAuthResponse(stage, response.StatusCode, "response body exceeds size limit")
+		}
+		if json.Unmarshal(data, out) != nil {
+			return 0, 0, invalidAuthResponse(stage, response.StatusCode, "expected a JSON response matching the authentication schema")
 		}
 	}
 	return response.StatusCode, after, nil
@@ -179,16 +194,32 @@ func (c *Client) doPrivate(req *http.Request) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func trustedURL(raw, expected string, approval bool) bool {
+func invalidAuthResponse(stage string, status int, reason string) error {
+	// Never include server-supplied body, links, header values or tokens here.
+	return fmt.Errorf("invalid Leaderboard authentication response (%s, HTTP %d): %s", stage, status, reason)
+}
+
+func approvalLinkProblem(raw, baseURL, pollCode string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") || u.Opaque != "" || u.ForceQuery {
-		return false
+	if err != nil || u.User != nil || u.Opaque != "" || strings.Contains(raw, "#") {
+		return "invalid browser approval link"
 	}
-	if expected != "" && strings.SplitN(raw, "?", 2)[0] != expected {
-		return false
+	base, _ := url.Parse(baseURL) // The caller has already checked the configured URL against BaseURL.
+	if u.Scheme != "https" || !(strings.EqualFold(u.Host, base.Host) || strings.EqualFold(u.Host, base.Host+":443")) {
+		return "browser approval link outside the Leaderboard HTTPS origin"
 	}
-	if approval {
-		return approvalQuery.MatchString(u.RawQuery)
+	mount := strings.TrimSuffix(base.Path, "/") + "/"
+	// Reject normalization tricks (escaped slashes, dot segments and duplicate
+	// separators) rather than trusting that the browser and server agree on them.
+	if !strings.HasPrefix(u.Path, mount) || u.EscapedPath() != u.Path || path.Clean(u.Path) != strings.TrimSuffix(u.Path, "/") {
+		return "browser approval link outside the canonical Leaderboard path"
 	}
-	return u.RawQuery == ""
+	query, err := url.QueryUnescape(u.RawQuery)
+	if err != nil {
+		return "invalid browser approval query"
+	}
+	if strings.Contains(raw, pollCode) || strings.Contains(query, pollCode) {
+		return "browser approval link contains the private polling code"
+	}
+	return ""
 }

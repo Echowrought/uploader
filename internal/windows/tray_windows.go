@@ -3,6 +3,7 @@ package windows
 import (
 	"context"
 	"errors"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, windowsSignInLaunch bool) error {
+func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app.Command, updates <-chan app.Status, config storage.Config, dir string, account *leaderboard.Account, authenticator *leaderboard.Authenticator, logger *log.Logger, windowsSignInLaunch bool) error {
 	job, err := newSubprocessJob()
 	if err != nil {
 		return err
@@ -170,6 +171,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					if err == nil {
 						send(app.Command{Kind: "retry-automatic"})
 					} else if !errors.Is(err, context.Canceled) && !errors.Is(err, leaderboard.ErrAuthCancelled) {
+						logger.Printf("[auth] %v", err)
 						showError(err)
 					}
 				case <-disconnect.ClickedCh:

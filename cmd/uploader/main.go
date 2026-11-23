@@ -106,7 +106,7 @@ func run(console, dryRun, windowsSignInLaunch, nonInteractive bool, saveFolder s
 			if nonInteractive {
 				return fmt.Errorf("%s. Run with --authenticate before retrying --non-interactive", problem)
 			}
-			if err := authenticateConsole(ctx, configDir, account, ui); err != nil {
+			if err := authenticateConsole(ctx, configDir, stateDir, account, ui); err != nil {
 				return err
 			}
 		}
@@ -170,6 +170,9 @@ func run(console, dryRun, windowsSignInLaunch, nonInteractive bool, saveFolder s
 	authenticator := leaderboard.NewAuthenticator(client)
 	if !console && account.UploadBlock() != "" {
 		if err := authenticateTray(ctx, account, authenticator); err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, leaderboard.ErrAuthCancelled) {
+				logger.Printf("[auth] %v", err)
+			}
 			return err
 		}
 	}
@@ -207,14 +210,14 @@ func runAuthentication() error {
 	account, _ := leaderboard.OpenAccount(configDir)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := authenticateConsole(ctx, configDir, account, ui); err != nil {
+	if err := authenticateConsole(ctx, configDir, stateDir, account, ui); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(ui.out, account.Status())
 	return err
 }
 
-func authenticateConsole(ctx context.Context, configDir string, account *leaderboard.Account, ui consoleUI) error {
+func authenticateConsole(ctx context.Context, configDir, stateDir string, account *leaderboard.Account, ui consoleUI) (authErr error) {
 	proxyURL, err := storage.LoadProxyURL(configDir)
 	if err != nil {
 		return err
@@ -225,6 +228,19 @@ func authenticateConsole(ctx context.Context, configDir string, account *leaderb
 	}
 	defer httpClient.CloseIdleConnections()
 	authenticator := leaderboard.NewAuthenticator(leaderboard.NewClient(httpClient, account))
+	defer func() {
+		if authErr == nil || errors.Is(authErr, context.Canceled) || errors.Is(authErr, leaderboard.ErrAuthCancelled) {
+			return
+		}
+		writer, err := storage.OpenLog(stateDir)
+		if err == nil {
+			err = log.New(writer, "[auth] ", log.Ldate|log.Ltime).Output(2, authErr.Error())
+			err = errors.Join(err, writer.Close())
+		}
+		if err != nil {
+			authErr = errors.Join(authErr, fmt.Errorf("write authentication log: %w", err))
+		}
+	}()
 	stopSpinner := func() {}
 	defer func() { stopSpinner() }()
 	credential, err := authenticator.Authenticate(ctx, func(_ context.Context, link string) error {

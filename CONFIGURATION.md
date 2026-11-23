@@ -117,12 +117,15 @@ are also written to the terminal. Stop Linux with Ctrl+C or SIGTERM, and never
 remove its `instance.lock` file while an instance may be running. The log rotates at 2 MiB, keeping three previous files, with no external
 rotation tool required.
 
-- `[poller]`, `[uploader]`, and `[app]` identify the component.
+- `[auth]`, `[poller]`, `[uploader]`, and `[app]` identify the component.
+- Authentication failures identify the stage and, for response validation errors,
+  the HTTP status and reason. Authentication response bodies, links, and tokens
+  are not logged.
 - Save warnings name omitted supplementary files or files using older settled
   contents while a replacement cannot be used.
 - Individual disk entries are capped at 256 KiB, including the truncation marker,
   without splitting valid UTF-8. Console output is not truncated.
-- Outgoing save contents are not logged. Error messages contain a quoted preview
+- Outgoing save contents are not logged. Upload error messages may contain a quoted preview
   of up to 512 response-body bytes. Full HTTP error bodies are additionally
   logged only when smaller than 4 KiB. Controls/newlines are escaped and valid
   UTF-8 characters are not split.
