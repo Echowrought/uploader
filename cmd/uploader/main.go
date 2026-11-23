@@ -234,7 +234,7 @@ func authenticateConsole(ctx context.Context, configDir, stateDir string, accoun
 		}
 		writer, err := storage.OpenLog(stateDir)
 		if err == nil {
-			err = log.New(writer, "[auth] ", log.Ldate|log.Ltime).Output(2, authErr.Error())
+			err = log.New(writer, "", log.Ldate|log.Ltime).Output(2, "[auth] "+authErr.Error())
 			err = errors.Join(err, writer.Close())
 		}
 		if err != nil {
