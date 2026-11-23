@@ -71,7 +71,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				cancelAuth.Show()
 				refreshAccount()
 				go func() {
-					authDone <- authenticateWithApproval(authCtx, authenticator.Authenticate, presentApproval)
+					authDone <- authenticateWithApproval(authCtx, authenticator.AuthenticateWithConfirmation, presentApproval)
 				}()
 			}
 			send := func(command app.Command) {
