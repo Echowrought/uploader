@@ -14,6 +14,13 @@ func (s *runState) handleCommand(ctx context.Context, command Command) error {
 	case "upload":
 		s.poller.requestEmission()
 		// Manual retry does not bypass Retry-After or stability checks.
+	case "retry-automatic":
+		// Authentication can finish before the UI receives a settings update.
+		// Only the coordinator's current preference may create automatic work.
+		if !s.app.Config.Automatic {
+			return nil
+		}
+		s.poller.requestEmission()
 	case "pause":
 		if err := s.toggleAutomatic(); err != nil {
 			return err

@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"cwgrpguploader/internal/leaderboard"
 	"cwgrpguploader/internal/storage"
 )
 
@@ -55,6 +57,49 @@ func TestCommandResumeStartsCheckingStableSaves(t *testing.T) {
 		}
 		if !application.Config.Automatic || request.startedAt.Before(resumed.Add(5*time.Second)) {
 			t.Fatal("resume skipped settling or did not resume detection")
+		}
+	})
+}
+
+func TestAutomaticRetryAfterPauseDoesNotCreateManualWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+
+		done := startApp(ctx, application)
+		// Leave statuses unread: authentication completion must not rely on
+		// the tray having received the coordinator's newly disabled setting.
+		pauseErr := sendCommand(t, ctx, application, Command{Kind: "pause"})
+		retryErr := sendCommand(t, ctx, application, Command{Kind: "retry-automatic"})
+		time.Sleep(6 * time.Second)
+		synctest.Wait()
+		cancel()
+		<-done
+
+		if pauseErr != nil || retryErr != nil || application.Config.Automatic || len(client.requests) != 0 {
+			t.Fatalf("pause=%v retry=%v automatic=%v uploads=%d", pauseErr, retryErr, application.Config.Automatic, len(client.requests))
+		}
+	})
+}
+
+func TestAutomaticRetryReemitsUnchangedRejectedSaves(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		application, client := fixtureApp(t)
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+
+		done := startApp(ctx, application)
+		first := nextRequest(t, ctx, client)
+		first.reply <- uploadReply{err: leaderboard.ErrAuthenticationRejected}
+		_ = awaitStatus(t, ctx, application, "authentication rejected")
+		retryErr := sendCommand(t, ctx, application, Command{Kind: "retry-automatic"})
+		second := nextRequest(t, ctx, client)
+		cancel()
+		<-done
+
+		if retryErr != nil || !application.Config.Automatic || !reflect.DeepEqual(first.payload, second.payload) {
+			t.Fatalf("retry=%v automatic=%v; unchanged rejected saves were not retried", retryErr, application.Config.Automatic)
 		}
 	})
 }

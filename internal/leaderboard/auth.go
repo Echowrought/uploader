@@ -31,44 +31,21 @@ type Authenticator struct {
 	pending bool
 }
 
-// NewAuthenticator shares the account already attached to client.
+// NewAuthenticator uses the client's HTTP transport and fixed destination.
 func NewAuthenticator(client *Client) *Authenticator { return &Authenticator{client: client} }
 
-func (a *Authenticator) Authenticate(ctx context.Context, present func(context.Context, string) error) error {
-	return a.AuthenticateWithConfirmation(ctx, present, nil)
-}
-
-// AuthenticateWithConfirmation can hold an approved credential until the UI
-// confirms that uploads may resume. The device polling deadline ends at approval.
-func (a *Authenticator) AuthenticateWithConfirmation(ctx context.Context, present func(context.Context, string) error, confirm func() error) error {
+// Authenticate returns an approved credential without saving or activating it.
+// Callers decide when to publish it through Account.SetCredential.
+func (a *Authenticator) Authenticate(ctx context.Context, present func(context.Context, string) error) (storage.Credential, error) {
 	a.mu.Lock()
 	if a.pending {
 		a.mu.Unlock()
-		return errors.New("authentication already in progress")
+		return storage.Credential{}, errors.New("authentication already in progress")
 	}
 	a.pending = true
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.pending = false; a.mu.Unlock() }()
 
-	credential, err := a.pollApproval(ctx, present)
-	if err != nil {
-		return err
-	}
-	if ctx.Err() != nil {
-		return authContextError(ctx)
-	}
-	if confirm != nil {
-		if err := confirm(); err != nil {
-			return err
-		}
-	}
-	if ctx.Err() != nil {
-		return authContextError(ctx)
-	}
-	return a.client.account.SetCredential(credential)
-}
-
-func (a *Authenticator) pollApproval(ctx context.Context, present func(context.Context, string) error) (storage.Credential, error) {
 	var empty storage.Credential
 	began := time.Now()
 	attempt, err := a.client.beginAuth(ctx)

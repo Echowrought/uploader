@@ -167,6 +167,12 @@ func run(console, dryRun, windowsSignInLaunch, nonInteractive bool, saveFolder s
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	authenticator := leaderboard.NewAuthenticator(client)
+	if !console && account.UploadBlock() != "" {
+		if err := authenticateTray(ctx, account, authenticator); err != nil {
+			return err
+		}
+	}
 	application := &app.App{
 		Dir: stateDir, ConfigDir: configDir, Config: config, LastUpload: lastUpload, DryRun: dryRun,
 		Client: client,
@@ -177,7 +183,7 @@ func run(console, dryRun, windowsSignInLaunch, nonInteractive bool, saveFolder s
 	if console {
 		return runConsole(ctx, cancel, application, done, dryRun)
 	}
-	err = runTray(ctx, cancel, application, configDir, account, leaderboard.NewAuthenticator(client), windowsSignInLaunch)
+	err = runTray(ctx, cancel, application, configDir, account, authenticator, windowsSignInLaunch)
 	cancel()
 	<-done
 	return err
@@ -221,7 +227,7 @@ func authenticateConsole(ctx context.Context, configDir string, account *leaderb
 	authenticator := leaderboard.NewAuthenticator(leaderboard.NewClient(httpClient, account))
 	stopSpinner := func() {}
 	defer func() { stopSpinner() }()
-	return authenticator.Authenticate(ctx, func(_ context.Context, link string) error {
+	credential, err := authenticator.Authenticate(ctx, func(_ context.Context, link string) error {
 		stop, err := ui.showApproval(link)
 		if err != nil {
 			return err
@@ -229,6 +235,13 @@ func authenticateConsole(ctx context.Context, configDir string, account *leaderb
 		stopSpinner = stop
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return account.SetCredential(credential)
 }
 
 func runConsole(ctx context.Context, cancel context.CancelFunc, application *app.App, done <-chan struct{}, dryRun bool) error {

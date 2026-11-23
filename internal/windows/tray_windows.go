@@ -21,7 +21,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		return err
 	}
 	defer job.Close()
-	startupFailure := make(chan error, 1)
 	systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTooltip("CWG RPG Uploader")
@@ -71,7 +70,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				cancelAuth.Show()
 				refreshAccount()
 				go func() {
-					authDone <- authenticateWithApproval(authCtx, authenticator.AuthenticateWithConfirmation, presentApproval)
+					authDone <- Authenticate(authCtx, account, authenticator)
 				}()
 			}
 			send := func(command app.Command) {
@@ -99,10 +98,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			if !windowsSignInLaunch {
 				showError(errors.Join(startupRefreshErr, startupErr))
 			}
-			startupAuth := account.UploadBlock() != ""
-			if startupAuth {
-				startAuth()
-			}
 			badged := false
 			refresh := func() {
 				refreshAccount()
@@ -113,9 +108,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					badged = blocked
 					if blocked {
 						systray.SetIcon(errorTrayIcon())
-						if !startupAuth {
-							notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
-						}
+						notifyTray("CWG RPG Uploader", "Backups not uploading — "+problem)
 					} else {
 						systray.SetIcon(trayIcon)
 					}
@@ -131,11 +124,6 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				}
 			}
 			refresh()
-			failStartup := func(err error) {
-				startupFailure <- err
-				cancel()
-				systray.Quit()
-			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -174,18 +162,13 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						stopAuth()
 					}
 				case err := <-authDone:
-					if startupAuth && err != nil {
-						failStartup(err)
-						return
-					}
-					startupAuth = false
 					stopAuth()
 					stopAuth = nil
 					cancelAuth.Hide()
 					disconnect.Enable()
 					refresh()
-					if err == nil && latest.Config.Automatic {
-						send(app.Command{Kind: "upload"})
+					if err == nil {
+						send(app.Command{Kind: "retry-automatic"})
 					} else if !errors.Is(err, context.Canceled) && !errors.Is(err, leaderboard.ErrAuthCancelled) {
 						showError(err)
 					}
@@ -236,12 +219,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 			}
 		}()
 	}, cancel)
-	select {
-	case err := <-startupFailure:
-		return err
-	default:
-		return nil
-	}
+	return nil
 }
 
 func accountMenu(account *leaderboard.Account, pending bool) (title string, enabled bool) {
