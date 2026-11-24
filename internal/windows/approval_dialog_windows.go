@@ -89,12 +89,12 @@ func presentApproval(ctx context.Context, link string, approved <-chan struct{})
 	}
 
 	title, _ := windows.UTF16PtrFromString("CWG RPG Uploader")
-	instruction, _ := windows.UTF16PtrFromString("Waiting for Battle.net approval")
+	instruction, _ := windows.UTF16PtrFromString("Connect your uploader")
 	body, err := windows.UTF16PtrFromString(approvalContent(link))
 	if err != nil {
 		return errors.New("invalid authentication link")
 	}
-	footer, _ := windows.UTF16PtrFromString("Waiting for browser approval. Open the highlighted link or copy it into your browser. Cancel stops the attempt.")
+	footer, _ := windows.UTF16PtrFromString("Waiting for you to approve upload access. Cancel stops the connection attempt.")
 	open, _ := windows.UTF16PtrFromString("Open in default browser")
 	copyLabel, _ := windows.UTF16PtrFromString("Copy link")
 	var pinned runtime.Pinner
@@ -154,8 +154,8 @@ func presentApproval(ctx context.Context, link string, approved <-chan struct{})
 }
 
 func approvalSuccessPage(pinned *runtime.Pinner, title *uint16, checkIcon uintptr) *taskDialogConfig {
-	instruction, _ := windows.UTF16PtrFromString("Authentication approved")
-	content, _ := windows.UTF16PtrFromString("Your Battle.net account is ready. The uploader will start automatically.")
+	instruction, _ := windows.UTF16PtrFromString("Access approved")
+	content, _ := windows.UTF16PtrFromString("You can close the Leaderboard tab. The uploader will start automatically.")
 	start, _ := windows.UTF16PtrFromString(startButtonText(int(approvalStartDelay / time.Second)))
 	for _, text := range []*uint16{instruction, content, start} {
 		pinned.Pin(text)
@@ -174,7 +174,7 @@ func approvalSuccessPage(pinned *runtime.Pinner, title *uint16, checkIcon uintpt
 }
 
 func approvalContent(link string) string {
-	const introduction = "Connect your Battle.net account so the uploader can back up your CWG saves. Sign in through the Leaderboard and approve permission to upload saves."
+	const introduction = "Open the CWG Leaderboard and sign in if prompted. Check that the account shown is yours, then select Approve upload access.\r\n\r\nSigning in alone does not grant access. Approval lets the uploader upload your CWG2 saves only."
 	label := html.EscapeString(strings.Replace(link, "?", "?\r\n", 1))
 	// Use a fixed hyperlink target. The click handler only opens the validated approval URL.
 	return introduction + "\r\n\r\n" + `<a href="approval">` + label + `</a>`
@@ -198,7 +198,7 @@ func handleApprovalDialog(window, notification, button, _, _ uintptr) uintptr {
 			openApprovalInBrowser(window, state)
 			return 1 // S_FALSE keeps the dialog open while the browser is in use.
 		case dialogCopy:
-			message := "Link copied. Paste it into your browser and approve upload access. Waiting for approval..."
+			message := "Link copied. Paste it into your browser to review the account shown and approve upload access."
 			if !copyApprovalLink(window, state.link) {
 				message = "Could not copy the link. Try again or choose Open in default browser."
 			}
@@ -339,7 +339,7 @@ func openApprovalInBrowser(window uintptr, state *approvalDialog) {
 		setApprovalFooter(window, "Could not open the default browser. Copy the link to open it yourself.")
 		return
 	}
-	setApprovalFooter(window, "Waiting for approval. Sign in through your browser and approve upload access.")
+	setApprovalFooter(window, "Waiting for approval. Check the account shown in your browser, then select Approve upload access.")
 }
 
 func setApprovalFooter(window uintptr, message string) {
