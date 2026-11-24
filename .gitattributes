@@ -1,0 +1,2 @@
+# Keep the tracked notice snapshot in its original line-ending format on Windows.
+THIRD_PARTY_NOTICES.md text eol=lf
