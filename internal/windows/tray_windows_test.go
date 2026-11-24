@@ -1,13 +1,50 @@
 package windows
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"unicode/utf16"
 
 	"cwgrpguploader/internal/leaderboard"
 	"cwgrpguploader/internal/storage"
 )
+
+func TestTrayClickIsRetainedWhileTheMenuLoopIsBusy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		clicks := make(chan struct{}) // Unbuffered, like systray's ClickedCh.
+		pending := queueTrayClicks(ctx, clicks)
+		synctest.Wait()
+		accepted := 0
+
+		// The menu loop does not read pending until both clicks have arrived.
+		for range 2 {
+			select {
+			case clicks <- struct{}{}:
+				accepted++
+			default:
+			}
+			synctest.Wait()
+		}
+
+		if accepted != 2 {
+			t.Fatalf("click collector accepted %d clicks; want 2", accepted)
+		}
+		select {
+		case <-pending:
+		default:
+			t.Fatal("first click was lost while the menu loop was busy")
+		}
+		select {
+		case <-pending:
+			t.Fatal("repeat click should not queue a duplicate action")
+		default:
+		}
+	})
+}
 
 func TestAccountMenuOnlyOffersAuthenticationWhenNeeded(t *testing.T) {
 	account, err := leaderboard.OpenAccount(t.TempDir())
