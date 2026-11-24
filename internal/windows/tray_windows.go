@@ -32,10 +32,14 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		automaticUploads := systray.AddMenuItemCheckbox("Automatic uploads", "Send new saves automatically; queued uploads and retries continue when off", config.Automatic)
 		upload := systray.AddMenuItem("Upload now", "Upload current saves even with Automatic uploads off")
 		systray.AddSeparator()
-		accountItem := systray.AddMenuItem("Authenticate...", "Leaderboard account")
+		const initialAccountTitle = "Authenticate..."
+		accountItem := systray.AddMenuItem(initialAccountTitle, "Leaderboard account")
+		authClicks := queueTrayClicks(ctx, accountItem.ClickedCh)
 		cancelAuth := systray.AddMenuItem("Cancel authentication", "Stop the pending authentication")
+		cancelAuthClicks := queueTrayClicks(ctx, cancelAuth.ClickedCh)
 		cancelAuth.Hide()
 		disconnect := systray.AddMenuItem("Disconnect", "Remove the local upload credential")
+		disconnectClicks := queueTrayClicks(ctx, disconnect.ClickedCh)
 		systray.AddSeparator()
 		board := systray.AddMenuItem("Open leaderboard", "")
 		settings := systray.AddMenuItem("Settings", "")
@@ -46,18 +50,24 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		configuration := settings.AddSubMenuItem("Open config.json (restart to reload)", "")
 		logs := settings.AddSubMenuItem("Open logs", "")
 		quit := systray.AddMenuItem("Quit", "")
+		quitClicks := queueTrayClicks(ctx, quit.ClickedCh)
 		go func() {
 			latest := app.Status{Message: "Starting", Config: config}
 			picked := make(chan folderResult, 1)
 			picking := false
 			authDone := make(chan error, 1)
 			var stopAuth context.CancelFunc
+			accountTitle := initialAccountTitle
 			refreshAccount := func() {
 				title, enabled := accountMenu(account, stopAuth != nil)
-				accountItem.SetTitle(display(title, 90))
-				if enabled {
+				title = display(title, 90)
+				if title != accountTitle {
+					accountItem.SetTitle(title)
+					accountTitle = title
+				}
+				if enabled && accountItem.Disabled() {
 					accountItem.Enable()
-				} else {
+				} else if !enabled && !accountItem.Disabled() {
 					accountItem.Disable()
 				}
 			}
@@ -130,7 +140,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 				case <-ctx.Done():
 					systray.Quit()
 					return
-				case <-quit.ClickedCh:
+				case <-quitClicks:
 					cancel()
 					systray.Quit()
 					return
@@ -156,9 +166,9 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 					send(app.Command{Kind: "pause"})
 				case <-upload.ClickedCh:
 					send(app.Command{Kind: "upload"})
-				case <-accountItem.ClickedCh:
+				case <-authClicks:
 					startAuth()
-				case <-cancelAuth.ClickedCh:
+				case <-cancelAuthClicks:
 					if stopAuth != nil {
 						stopAuth()
 					}
@@ -174,7 +184,7 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 						logger.Printf("[auth] %v", err)
 						showError(err)
 					}
-				case <-disconnect.ClickedCh:
+				case <-disconnectClicks:
 					if stopAuth == nil && !account.MissingCredential() {
 						if err := account.Disconnect(); err != nil {
 							showError(err)
@@ -222,6 +232,30 @@ func RunTray(ctx context.Context, cancel context.CancelFunc, commands chan<- app
 		}()
 	}, cancel)
 	return nil
+}
+
+// systray delivers clicks on an unbuffered channel and drops them unless a
+// receiver is waiting. Capture one pending click even when the tray is busy.
+// Use this for idempotent actions: rapid repeats can be combined.
+func queueTrayClicks(ctx context.Context, clicks <-chan struct{}) <-chan struct{} {
+	pending := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-clicks:
+				if !ok {
+					return
+				}
+				select {
+				case pending <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	return pending
 }
 
 func accountMenu(account *leaderboard.Account, pending bool) (title string, enabled bool) {
