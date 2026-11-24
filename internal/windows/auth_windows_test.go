@@ -35,12 +35,22 @@ func TestNativeApprovalDialogUsesPackedWindowsABI(t *testing.T) {
 }
 
 func TestApprovalContentShowsTheFullLinkAsAClickableLabel(t *testing.T) {
-	link := leaderboard.BaseURL + "/api/uploader/approve?request=" + strings.Repeat("A", 43)
+	link := leaderboard.BaseURL + "/connect-uploader?request=" + strings.Repeat("A", 43)
 
 	content := strings.ReplaceAll(approvalContent(link), "\r\n", "")
 
 	if !strings.Contains(content, `<a href="approval">`+link+`</a>`) {
 		t.Fatalf("full approval link was not displayed as a hyperlink: %s", content)
+	}
+}
+
+func TestApprovalContentExplainsTheLeaderboardConsentStep(t *testing.T) {
+	content := approvalContent(leaderboard.BaseURL + "/connect-uploader")
+
+	for _, phrase := range []string{"sign in if prompted", "Check that the account shown is yours, then select Approve upload access", "Signing in alone does not grant access", "upload your CWG2 saves only"} {
+		if !strings.Contains(content, phrase) {
+			t.Errorf("missing instruction: %q", phrase)
+		}
 	}
 }
 
