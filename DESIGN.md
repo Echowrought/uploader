@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft design for a Go application that automatically submits Warcraft III CWG RPG saves to the [CWG RPG leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard).
+Draft design for a Go application that automatically submits Warcraft III CWG RPG saves to the [CWG RPG leaderboard](https://cwg.echowrought.com/leaderboard/).
 
 Confirmed decisions:
 

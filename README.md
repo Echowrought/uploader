@@ -1,6 +1,6 @@
 # CWG RPG Uploader
 
-Watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-leaderboard.rskiland.workers.dev/#leaderboard). Available for Windows 10+ (tray or console) and Linux x86-64 (console only). It never modifies game saves.
+Watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg.echowrought.com/leaderboard/). Available for Windows 10+ (tray or console) and Linux x86-64 (console only). It never modifies game saves.
 
 **Unofficial community tool — not an official CWG RPG application.**
 
@@ -8,7 +8,7 @@ Watches CWG RPG saves and uploads them to the [public leaderboard](https://cwg2-
 
 ## Install and run
 
-Download a package from [Releases](https://github.com/cwg-rpg-community/uploader/releases):
+Download a package from [Releases](https://github.com/Echowrought/uploader/releases):
 
 | Package | Use it for |
 | --- | --- |
@@ -131,7 +131,9 @@ Both build scripts default to version `dev`. Use `-Version vX.Y.Z` to embed a re
 - [Profiling](cmd/profile/readme.md): upload-disabled memory diagnostics.
 - [Website](site/README.md): landing-page preview and GitHub Pages deployment.
 
-## License
+## Author and license
+
+Author: [@hmnid](https://github.com/hmnid). Copyright © 2026 [echowrought.com](https://echowrought.com/).
 
 [MIT](LICENSE). Keep the [third-party notices](THIRD_PARTY_NOTICES.md) with distributions.
 
