@@ -133,7 +133,7 @@ Both build scripts default to version `dev`. Use `-Version vX.Y.Z` to embed a re
 
 ## Author and license
 
-Author: [@hmnid](https://github.com/hmnid). Copyright © 2026 [echowrought.com](https://echowrought.com/).
+Author: [@hmnid](https://github.com/hmnid). Copyright © 2026 hmnid ([echowrought.com](https://echowrought.com/)).
 
 [MIT](LICENSE). Keep the [third-party notices](THIRD_PARTY_NOTICES.md) with distributions.
 
