@@ -29,7 +29,7 @@ icon into the deployment folder; edit `assets/icon.svg`, not a second icon sourc
 Deployments use the `github-pages` environment and its protection rules. PRs do
 not publish. Repository source and application binaries are not included.
 
-The expected project URL is https://cwg-rpg-community.github.io/uploader/.
+The expected project URL is https://echowrought.github.io/uploader/.
 Relative asset links also work with a custom domain. Download links go to GitHub
 Releases so players choose the appropriate package; the page never downloads or
 launches the uploader automatically. Keep the upload/privacy disclosure prominent
